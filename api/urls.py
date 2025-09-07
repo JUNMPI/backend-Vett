@@ -15,6 +15,10 @@ router.register(r'trabajadores', TrabajadorViewSet)
 router.register(r'veterinarios', VeterinarioViewSet)
 router.register(r'servicios', ServicioViewSet)
 router.register(r'citas', CitaViewSet)
+# 🐾 URLs del sistema de vacunación
+router.register(r'vacunas', VacunaViewSet)
+router.register(r'historial-vacunacion', HistorialVacunacionViewSet)
+router.register(r'historial-medico', HistorialMedicoViewSet)
 
 urlpatterns = router.urls + [
     path('login/', LoginView.as_view(), name='token_obtain_pair'),

@@ -332,6 +332,35 @@ class ProductoViewSet(viewsets.ModelViewSet):
         # Devolvemos la respuesta en formato JSON
         return Response({'total': count})
     
+    @action(detail=False, methods=['get'], url_path='vacunas')
+    def vacunas_inventario(self, request):
+        """
+        Endpoint adicional para obtener productos tipo vacuna
+        URL: GET /api/productos/vacunas/
+        """
+        from django.db.models import Q
+        
+        productos_vacunas = Producto.objects.filter(
+            Q(tipo__icontains='vacuna') |
+            Q(subtipo__icontains='vacuna') |
+            Q(nombre__icontains='vacuna') |
+            Q(descripcion__icontains='vacuna')
+        ).filter(estado__iexact='activo')
+        
+        search = request.query_params.get('search')
+        if search:
+            productos_vacunas = productos_vacunas.filter(
+                Q(nombre__icontains=search) |
+                Q(descripcion__icontains=search) |
+                Q(proveedor__icontains=search)
+            )
+        
+        # Limitar a 20 resultados
+        productos_vacunas = productos_vacunas[:20]
+        
+        serializer = self.get_serializer(productos_vacunas, many=True)
+        return Response(serializer.data)
+    
 class MascotaViewSet(viewsets.ModelViewSet):
     queryset = Mascota.objects.all()
     serializer_class = MascotaSerializer 
@@ -457,3 +486,267 @@ class RegistrarTrabajadorView(APIView):
                 'trabajador_id': str(trabajador.id)
             }, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+# 🐾 VIEWSETS SISTEMA DE VACUNACIÓN
+
+class VacunaViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet para gestión del catálogo de vacunas
+    """
+    queryset = Vacuna.objects.all()
+    serializer_class = VacunaSerializer
+    
+    def get_queryset(self):
+        return Vacuna.objects.all()
+    
+    @action(detail=False, methods=['get'], url_path='activas')
+    def activas(self, request):
+        """Obtener solo vacunas activas"""
+        vacunas_activas = Vacuna.objects.filter(estado__iexact='activo')
+        serializer = self.get_serializer(vacunas_activas, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'], url_path='por-especie/(?P<especie>[^/.]+)')
+    def por_especie(self, request, especie=None):
+        """Obtener vacunas por especie"""
+        vacunas = Vacuna.objects.filter(
+            especies__icontains=especie.title(),
+            estado__iexact='activo'
+        )
+        serializer = self.get_serializer(vacunas, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'], url_path='obligatorias')
+    def obligatorias(self, request):
+        """Obtener solo vacunas obligatorias"""
+        vacunas_obligatorias = Vacuna.objects.filter(
+            es_obligatoria=True,
+            estado__iexact='activo'
+        )
+        serializer = self.get_serializer(vacunas_obligatorias, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=True, methods=['patch'])
+    def desactivar(self, request, pk=None):
+        """Desactivar vacuna"""
+        vacuna = self.get_object()
+        vacuna.estado = 'Inactivo'
+        vacuna.save()
+        return Response({'status': 'vacuna desactivada'})
+    
+    @action(detail=True, methods=['patch'])
+    def activar(self, request, pk=None):
+        """Activar vacuna"""
+        vacuna = self.get_object()
+        vacuna.estado = 'Activo'
+        vacuna.save()
+        return Response({'status': 'vacuna activada'})
+    
+    @action(detail=True, methods=['patch'], url_path='update-estado')
+    def update_estado(self, request, pk=None):
+        """
+        Actualizar solo el estado de una vacuna (Activo/Inactivo)
+        URL: PATCH /api/vacunas/{id}/update-estado/
+        Body: {"estado": "Activo"} o {"estado": "Inactivo"}
+        """
+        vacuna = self.get_object()
+        nuevo_estado = request.data.get('estado')
+        
+        if nuevo_estado not in ['Activo', 'Inactivo']:
+            return Response(
+                {'error': 'Estado debe ser "Activo" o "Inactivo"'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        vacuna.estado = nuevo_estado
+        vacuna.save()
+        
+        serializer = self.get_serializer(vacuna)
+        return Response({
+            'status': f'vacuna {nuevo_estado.lower()}ada',
+            'vacuna': serializer.data
+        })
+    
+    @action(detail=False, methods=['get'], url_path='productos-vacunas')
+    def productos_vacunas(self, request):
+        """
+        Obtener solo productos que sean vacunas del inventario
+        URL: GET /api/vacunas/productos-vacunas/
+        Query params: ?search=nombre (opcional)
+        """
+        from django.db.models import Q
+        
+        # Filtrar productos que contengan "vacuna" en nombre, tipo o subtipo
+        productos = Producto.objects.filter(
+            Q(tipo__icontains='vacuna') |
+            Q(subtipo__icontains='vacuna') |
+            Q(nombre__icontains='vacuna')
+        ).filter(estado__iexact='activo')
+        
+        # Búsqueda opcional por nombre
+        search = request.query_params.get('search')
+        if search:
+            productos = productos.filter(
+                Q(nombre__icontains=search) |
+                Q(descripcion__icontains=search)
+            )
+        
+        # Limitar resultados para el dropdown
+        productos = productos[:10]
+        
+        serializer = ProductoSerializer(productos, many=True)
+        return Response(serializer.data)
+
+
+class HistorialVacunacionViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet para gestión del historial de vacunación
+    """
+    queryset = HistorialVacunacion.objects.all()
+    serializer_class = HistorialVacunacionSerializer
+    
+    def get_queryset(self):
+        mascota_id = self.request.query_params.get('mascota_id')
+        if mascota_id:
+            return HistorialVacunacion.objects.filter(mascota__id=mascota_id)
+        return HistorialVacunacion.objects.all()
+    
+    @action(detail=False, methods=['get'], url_path='por-mascota/(?P<mascota_id>[^/.]+)')
+    def por_mascota(self, request, mascota_id=None):
+        """Obtener historial de vacunación por mascota"""
+        historial = HistorialVacunacion.objects.filter(
+            mascota__id=mascota_id
+        ).order_by('-fecha_aplicacion')
+        serializer = self.get_serializer(historial, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'], url_path='vencidas')
+    def vencidas(self, request):
+        """Obtener vacunas vencidas"""
+        from datetime import date
+        historial_vencido = HistorialVacunacion.objects.filter(
+            proxima_fecha__lt=date.today()
+        ).order_by('proxima_fecha')
+        serializer = self.get_serializer(historial_vencido, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'], url_path='proximas')
+    def proximas(self, request):
+        """Obtener vacunas próximas a vencer (próximos 30 días)"""
+        from datetime import date, timedelta
+        fecha_limite = date.today() + timedelta(days=30)
+        historial_proximo = HistorialVacunacion.objects.filter(
+            proxima_fecha__gte=date.today(),
+            proxima_fecha__lte=fecha_limite
+        ).order_by('proxima_fecha')
+        serializer = self.get_serializer(historial_proximo, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'], url_path='alertas')
+    def alertas(self, request):
+        """
+        Endpoint especializado para alertas del dashboard
+        Devuelve vacunas vencidas y próximas a vencer con información completa
+        """
+        from datetime import date, timedelta
+        from django.db.models import Q
+        
+        # Vacunas vencidas o próximas a vencer (próximos 7 días)
+        fecha_limite = date.today() + timedelta(days=7)
+        
+        alertas_query = HistorialVacunacion.objects.filter(
+            Q(proxima_fecha__lt=date.today()) |  # Vencidas
+            Q(proxima_fecha__lte=fecha_limite)   # Próximas a vencer
+        ).select_related('mascota', 'vacuna', 'mascota__responsable').order_by('proxima_fecha')
+        
+        alertas_data = []
+        for item in alertas_query:
+            dias_vencimiento = (item.proxima_fecha - date.today()).days
+            estado_alert = 'vencida' if dias_vencimiento < 0 else 'proxima'
+            
+            alertas_data.append({
+                'mascota_id': str(item.mascota.id),
+                'nombre_mascota': item.mascota.nombreMascota,
+                'vacuna_nombre': item.vacuna.nombre,
+                'proxima_fecha': item.proxima_fecha,
+                'dias_vencimiento': dias_vencimiento,
+                'estado': estado_alert,
+                'responsable_nombre': f"{item.mascota.responsable.nombres} {item.mascota.responsable.apellidos}",
+                'responsable_telefono': item.mascota.responsable.telefono
+            })
+        
+        serializer = VacunasAlertaSerializer(alertas_data, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'], url_path='estadisticas')
+    def estadisticas(self, request):
+        """Estadísticas generales de vacunación"""
+        from datetime import date, timedelta
+        
+        total_vacunas = HistorialVacunacion.objects.count()
+        vencidas = HistorialVacunacion.objects.filter(
+            proxima_fecha__lt=date.today()
+        ).count()
+        proximas_30_dias = HistorialVacunacion.objects.filter(
+            proxima_fecha__gte=date.today(),
+            proxima_fecha__lte=date.today() + timedelta(days=30)
+        ).count()
+        
+        return Response({
+            'total_vacunas_aplicadas': total_vacunas,
+            'vacunas_vencidas': vencidas,
+            'vacunas_proximas_30_dias': proximas_30_dias,
+            'porcentaje_cumplimiento': round((total_vacunas - vencidas) / total_vacunas * 100, 2) if total_vacunas > 0 else 0
+        })
+
+
+class HistorialMedicoViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet para gestión del historial médico
+    """
+    queryset = HistorialMedico.objects.all()
+    serializer_class = HistorialMedicoSerializer
+    
+    def get_queryset(self):
+        mascota_id = self.request.query_params.get('mascota_id')
+        if mascota_id:
+            return HistorialMedico.objects.filter(mascota__id=mascota_id)
+        return HistorialMedico.objects.all()
+    
+    @action(detail=False, methods=['get'], url_path='por-mascota/(?P<mascota_id>[^/.]+)')
+    def por_mascota(self, request, mascota_id=None):
+        """Obtener historial médico completo por mascota"""
+        historial = HistorialMedico.objects.filter(
+            mascota__id=mascota_id
+        ).order_by('-fecha')
+        serializer = self.get_serializer(historial, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'], url_path='por-tipo/(?P<tipo>[^/.]+)')
+    def por_tipo(self, request, tipo=None):
+        """Obtener historiales por tipo de atención"""
+        historial = HistorialMedico.objects.filter(tipo=tipo).order_by('-fecha')
+        serializer = self.get_serializer(historial, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'], url_path='resumen-mascota/(?P<mascota_id>[^/.]+)')
+    def resumen_mascota(self, request, mascota_id=None):
+        """Resumen médico de la mascota"""
+        from django.db.models import Count
+        
+        historial = HistorialMedico.objects.filter(mascota__id=mascota_id)
+        
+        resumen = {
+            'total_consultas': historial.count(),
+            'consultas_por_tipo': historial.values('tipo').annotate(
+                total=Count('tipo')
+            ).order_by('-total'),
+            'ultima_consulta': historial.first().fecha if historial.exists() else None,
+            'veterinarios_atendieron': historial.values(
+                'veterinario__trabajador__nombres',
+                'veterinario__trabajador__apellidos'
+            ).distinct().count()
+        }
+        
+        return Response(resumen)

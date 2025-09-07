@@ -344,4 +344,250 @@ class Cita(models.Model):
         return f"{self.fecha} {self.hora} — {self.mascota} ({self.get_estado_display()})"
 
 
+# 🐾 SISTEMA DE VACUNACIÓN - MODELOS PERÚ
+class Vacuna(models.Model):
+    """
+    Catálogo de vacunas disponibles según protocolos peruanos (SENASA)
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    nombre = models.CharField(max_length=100, help_text="Ej: Quíntuple, Antirrábica")
+    especies = models.JSONField(
+        default=list, 
+        help_text="Especies aplicables: ['Perro', 'Gato']"
+    )
+    frecuencia_meses = models.IntegerField(
+        help_text="Frecuencia en meses para refuerzo"
+    )
+    es_obligatoria = models.BooleanField(
+        default=True, 
+        help_text="¿Es obligatoria por ley peruana?"
+    )
+    edad_minima_semanas = models.IntegerField(
+        default=6, 
+        help_text="Edad mínima en semanas para primera aplicación"
+    )
+    enfermedad_previene = models.TextField(
+        help_text="Enfermedades que previene"
+    )
+    dosis_total = models.IntegerField(
+        default=1,
+        help_text="Número total de dosis en el protocolo inicial"
+    )
+    intervalo_dosis_semanas = models.IntegerField(
+        default=3,
+        help_text="Semanas entre dosis del protocolo inicial"
+    )
+    estado = models.CharField(
+        max_length=10,
+        choices=Estado.ESTADO_CHOICES,
+        default=Estado.ACTIVO,
+    )
+    producto_inventario = models.ForeignKey(
+        'Producto',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        help_text="Relación con el producto en inventario"
+    )
+    creado = models.DateTimeField(auto_now_add=True)
+    actualizado = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['nombre']
+        verbose_name = 'Vacuna'
+        verbose_name_plural = 'Vacunas'
+
+    def __str__(self):
+        especies_str = ', '.join(self.especies) if self.especies else 'Todas'
+        return f"{self.nombre} ({especies_str})"
+
+
+class HistorialVacunacion(models.Model):
+    """
+    Historial individual de vacunación por mascota
+    """
+    ESTADO_CHOICES = [
+        ('vigente', 'Vigente'),
+        ('vencida', 'Vencida'),
+        ('proxima', 'Próxima'),
+        ('aplicada', 'Aplicada')
+    ]
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    mascota = models.ForeignKey(
+        'Mascota',
+        on_delete=models.CASCADE,
+        related_name='historial_vacunacion'
+    )
+    vacuna = models.ForeignKey(
+        'Vacuna',
+        on_delete=models.CASCADE,
+        related_name='aplicaciones'
+    )
+    fecha_aplicacion = models.DateField(
+        help_text="Fecha real de aplicación"
+    )
+    proxima_fecha = models.DateField(
+        help_text="Próxima fecha calculada automáticamente"
+    )
+    veterinario = models.ForeignKey(
+        'Veterinario',
+        on_delete=models.CASCADE,
+        related_name='vacunas_aplicadas'
+    )
+    lote = models.CharField(
+        max_length=50, 
+        blank=True,
+        help_text="Lote de la vacuna aplicada"
+    )
+    laboratorio = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="Laboratorio fabricante"
+    )
+    dosis_numero = models.IntegerField(
+        default=1,
+        help_text="Número de dosis en el protocolo (1ra, 2da, etc.)"
+    )
+    observaciones = models.TextField(
+        blank=True,
+        help_text="Observaciones del veterinario"
+    )
+    estado = models.CharField(
+        max_length=20,
+        choices=ESTADO_CHOICES,
+        default='aplicada'
+    )
+    cita = models.ForeignKey(
+        'Cita',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        help_text="Cita en la que se aplicó la vacuna"
+    )
+    creado = models.DateTimeField(auto_now_add=True)
+    actualizado = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-fecha_aplicacion']
+        verbose_name = 'Historial de Vacunación'
+        verbose_name_plural = 'Historiales de Vacunación'
+
+    def __str__(self):
+        return f"{self.mascota} - {self.vacuna} ({self.fecha_aplicacion})"
+
+    def save(self, *args, **kwargs):
+        # Calcular automáticamente la próxima fecha
+        if self.fecha_aplicacion and self.vacuna:
+            from datetime import timedelta
+            dias_proxima = self.vacuna.frecuencia_meses * 30  # Aproximación
+            self.proxima_fecha = self.fecha_aplicacion + timedelta(days=dias_proxima)
+        
+        super().save(*args, **kwargs)
+
+    def esta_vencida(self):
+        """Verifica si la vacuna está vencida"""
+        from datetime import date
+        return self.proxima_fecha < date.today() if self.proxima_fecha else False
+
+    def dias_para_vencer(self):
+        """Días restantes para que venza la vacuna"""
+        from datetime import date
+        if self.proxima_fecha:
+            delta = self.proxima_fecha - date.today()
+            return delta.days
+        return None
+
+
+class HistorialMedico(models.Model):
+    """
+    Historial médico completo por mascota (consultas, tratamientos, etc.)
+    """
+    TIPO_CHOICES = [
+        ('vacuna', 'Vacunación'),
+        ('desparasitacion_interna', 'Desparasitación Interna'),
+        ('desparasitacion_externa', 'Desparasitación Externa'),
+        ('control_general', 'Control General'),
+        ('tratamiento', 'Tratamiento Específico'),
+        ('cirugia', 'Cirugía'),
+        ('emergencia', 'Emergencia'),
+        ('revision', 'Revisión de Rutina')
+    ]
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    mascota = models.ForeignKey(
+        'Mascota',
+        on_delete=models.CASCADE,
+        related_name='historial_medico'
+    )
+    fecha = models.DateTimeField(auto_now_add=True)
+    tipo = models.CharField(
+        max_length=30,
+        choices=TIPO_CHOICES,
+        default='control_general'
+    )
+    veterinario = models.ForeignKey(
+        'Veterinario',
+        on_delete=models.CASCADE,
+        related_name='atenciones_realizadas'
+    )
+    motivo_consulta = models.TextField(
+        help_text="Motivo de la consulta"
+    )
+    diagnostico = models.TextField(
+        blank=True,
+        help_text="Diagnóstico del veterinario"
+    )
+    tratamiento_aplicado = models.TextField(
+        blank=True,
+        help_text="Tratamiento o procedimiento realizado"
+    )
+    medicamentos = models.TextField(
+        blank=True,
+        help_text="Medicamentos recetados"
+    )
+    proxima_cita = models.DateField(
+        null=True,
+        blank=True,
+        help_text="Fecha recomendada para próxima cita"
+    )
+    peso_actual = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Peso registrado durante la consulta"
+    )
+    temperatura = models.DecimalField(
+        max_digits=4,
+        decimal_places=1,
+        null=True,
+        blank=True,
+        help_text="Temperatura corporal en °C"
+    )
+    observaciones = models.TextField(
+        blank=True,
+        help_text="Observaciones adicionales"
+    )
+    cita = models.ForeignKey(
+        'Cita',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        help_text="Cita asociada a este registro"
+    )
+    adjuntos = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="URLs de archivos adjuntos (radiografías, análisis, etc.)"
+    )
+
+    class Meta:
+        ordering = ['-fecha']
+        verbose_name = 'Historial Médico'
+        verbose_name_plural = 'Historiales Médicos'
+
+    def __str__(self):
+        return f"{self.mascota} - {self.get_tipo_display()} ({self.fecha.strftime('%d/%m/%Y')})"
+
 

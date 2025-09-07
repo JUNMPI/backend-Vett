@@ -336,3 +336,113 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             data['nombres'] = self.user.trabajador.nombres
             data['apellidos'] = self.user.trabajador.apellidos
         return data
+
+
+# 🐾 SERIALIZERS SISTEMA DE VACUNACIÓN
+
+class VacunaSerializer(serializers.ModelSerializer):
+    estado = serializers.ChoiceField(choices=Estado.ESTADO_CHOICES, required=False, default=Estado.ACTIVO)
+    producto_inventario = serializers.PrimaryKeyRelatedField(
+        queryset=Producto.objects.all(),
+        required=False,
+        allow_null=True
+    )
+    producto_inventario_info = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Vacuna
+        fields = [
+            'id', 'nombre', 'especies', 'frecuencia_meses', 'es_obligatoria',
+            'edad_minima_semanas', 'enfermedad_previene', 'dosis_total',
+            'intervalo_dosis_semanas', 'estado', 'producto_inventario',
+            'producto_inventario_info', 'creado', 'actualizado'
+        ]
+    
+    def get_producto_inventario_info(self, obj):
+        """Información completa del producto de inventario relacionado"""
+        if obj.producto_inventario:
+            return {
+                'id': str(obj.producto_inventario.id),
+                'nombre': obj.producto_inventario.nombre,
+                'stock': obj.producto_inventario.stock,
+                'precio_venta': float(obj.producto_inventario.precio_venta) if obj.producto_inventario.precio_venta else None,
+                'laboratorio': obj.producto_inventario.proveedor,
+                'fecha_vencimiento': obj.producto_inventario.fecha_vencimiento
+            }
+        return None
+
+
+class HistorialVacunacionSerializer(serializers.ModelSerializer):
+    mascota = serializers.PrimaryKeyRelatedField(queryset=Mascota.objects.all())
+    vacuna = serializers.PrimaryKeyRelatedField(queryset=Vacuna.objects.all())
+    veterinario = serializers.PrimaryKeyRelatedField(queryset=Veterinario.objects.all())
+    
+    # Campos de solo lectura para mostrar información relacionada
+    nombre_mascota = serializers.CharField(source='mascota.nombreMascota', read_only=True)
+    nombre_vacuna = serializers.CharField(source='vacuna.nombre', read_only=True)
+    nombre_veterinario = serializers.SerializerMethodField()
+    esta_vencida = serializers.SerializerMethodField()
+    dias_para_vencer = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = HistorialVacunacion
+        fields = [
+            'id', 'mascota', 'vacuna', 'fecha_aplicacion', 'proxima_fecha',
+            'veterinario', 'lote', 'laboratorio', 'dosis_numero', 'observaciones',
+            'estado', 'cita', 'creado', 'actualizado',
+            # Campos de solo lectura
+            'nombre_mascota', 'nombre_vacuna', 'nombre_veterinario',
+            'esta_vencida', 'dias_para_vencer'
+        ]
+    
+    def get_nombre_veterinario(self, obj):
+        if obj.veterinario and obj.veterinario.trabajador:
+            trabajador = obj.veterinario.trabajador
+            return f"{trabajador.nombres} {trabajador.apellidos}"
+        return "No asignado"
+    
+    def get_esta_vencida(self, obj):
+        return obj.esta_vencida()
+    
+    def get_dias_para_vencer(self, obj):
+        return obj.dias_para_vencer()
+
+
+class HistorialMedicoSerializer(serializers.ModelSerializer):
+    mascota = serializers.PrimaryKeyRelatedField(queryset=Mascota.objects.all())
+    veterinario = serializers.PrimaryKeyRelatedField(queryset=Veterinario.objects.all())
+    
+    # Campos de solo lectura
+    nombre_mascota = serializers.CharField(source='mascota.nombreMascota', read_only=True)
+    nombre_veterinario = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = HistorialMedico
+        fields = [
+            'id', 'mascota', 'fecha', 'tipo', 'veterinario', 'motivo_consulta',
+            'diagnostico', 'tratamiento_aplicado', 'medicamentos', 'proxima_cita',
+            'peso_actual', 'temperatura', 'observaciones', 'cita', 'adjuntos',
+            # Campos de solo lectura
+            'nombre_mascota', 'nombre_veterinario'
+        ]
+    
+    def get_nombre_veterinario(self, obj):
+        if obj.veterinario and obj.veterinario.trabajador:
+            trabajador = obj.veterinario.trabajador
+            return f"{trabajador.nombres} {trabajador.apellidos}"
+        return "No asignado"
+
+
+# Serializer especializado para dashboard de vacunas
+class VacunasAlertaSerializer(serializers.Serializer):
+    """
+    Serializer para alertas de vacunas en dashboard
+    """
+    mascota_id = serializers.UUIDField()
+    nombre_mascota = serializers.CharField()
+    vacuna_nombre = serializers.CharField()
+    proxima_fecha = serializers.DateField()
+    dias_vencimiento = serializers.IntegerField()
+    estado = serializers.CharField()
+    responsable_nombre = serializers.CharField()
+    responsable_telefono = serializers.CharField()
