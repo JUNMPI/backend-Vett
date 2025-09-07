@@ -521,3 +521,133 @@ class VacunaSerializer(serializers.ModelSerializer):
 - ✅ **Retrocompatibilidad:** Campo `especies` original mantenido
 - ✅ **Formularios funcionales:** Checkboxes de especies cargan correctamente
 - ✅ **Sin breaking changes:** APIs existentes no afectadas
+- ✅ **Sin límites artificiales:** Muestra todos los productos disponibles
+
+---
+
+## 🚨 **SISTEMA DE ALERTAS DE VACUNACIÓN - ACTUALIZACIÓN MAYOR**
+
+### 📅 **Implementación Completada - Dashboard de Alertas**
+
+**Fecha:** 2025-09-07  
+**Estado:** ✅ **COMPLETAMENTE FUNCIONAL**
+
+### 🆕 **Nuevo Endpoint Principal:**
+```
+GET /api/dashboard/alertas-vacunacion/
+```
+
+### 🎨 **Sistema de Colores Implementado:**
+| Color | Estado | Días Restantes | Prioridad | UI Frontend |
+|-------|--------|----------------|-----------|-------------|
+| `"red"` | `"vencida"` | < 0 días | Alta | 🔴 Fondo rojo |
+| `"orange"` | `"critica"` | 1-2 días | Alta | 🟠 Fondo naranja |
+| `"yellow"` | `"proxima"` | 3-7 días | Media | 🟡 Fondo amarillo |
+
+### 📊 **Respuesta JSON del Dashboard:**
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "mascota_id": "uuid",
+      "mascota_nombre": "Amara",
+      "mascota_especie": "Perro",
+      "vacuna_id": "uuid", 
+      "vacuna_nombre": "Antirrábica Canina",
+      "es_obligatoria": true,
+      "fecha_aplicacion": "2024-09-05",
+      "proxima_fecha": "2025-08-31",
+      "dias_restantes": -7,
+      "estado": "vencida",
+      "prioridad": "alta",
+      "dosis_numero": 5,
+      "responsable_nombre": "Piero Castillo Paz",
+      "responsable_telefono": "917468122",
+      "veterinario_nombre": "Demis Andonaire",
+      "color": "red"  // ← 🆕 CAMPO PARA UI
+    }
+  ],
+  "estadisticas": {
+    "total_alertas": 3,
+    "vencidas": 1,
+    "proximas": 2,
+    "criticas": 2,
+    "fecha_consulta": "2025-09-07"
+  },
+  "message": "3 alertas de vacunación encontradas", 
+  "status": "success"
+}
+```
+
+### 🔄 **Estados de Vacunación Actualizados:**
+```typescript
+type EstadoVacuna = 
+  | 'aplicada'    // ✅ Vacuna recién aplicada (estado inicial)
+  | 'vigente'     // ✅ Vacuna aún válida  
+  | 'proxima'     // ⏰ Próxima a vencer (3-7 días)
+  | 'critica'     // 🚨 Crítica (1-2 días restantes)  
+  | 'vencida'     // ❌ Ya venció (< 0 días)
+  | 'completado'; // 🚫 Oculta del dashboard (solo para historial)
+```
+
+### 🧹 **Limpieza Automática:**
+- **Automático:** Las alertas vencidas >7 días se marcan como `completado`
+- **Dashboard:** Solo muestra alertas activas (`vencida`, `critica`, `proxima`)
+- **Historial:** Todos los registros permanecen en BD para auditoria médica
+- **Trigger:** Se ejecuta automáticamente en cada llamada al endpoint
+
+### 🎯 **Aplicar Vacuna Mejorado:**
+```
+POST /api/vacunas/{vacuna_id}/aplicar/
+```
+**Comportamiento actualizado:**
+- Marca registros anteriores como `completado` automáticamente
+- Calcula próxima fecha usando `frecuencia_meses` de la vacuna
+- Crea nuevo registro con estado `aplicada`
+- Evita alertas duplicadas
+
+### 📈 **Migración Aplicada:**
+```
+api.0006_add_completado_estado_historial_vacunacion.py
+```
+- Agregado estado `'completado'` a HistorialVacunacion
+- Backward compatible con estados existentes
+
+### 🔧 **Integración Frontend:**
+**CSS Sugerido:**
+```css
+.alert-red { background: #dc3545; color: white; }
+.alert-orange { background: #fd7e14; color: #212529; }
+.alert-yellow { background: #ffc107; color: #212529; }
+```
+
+**TypeScript Interface:**
+```typescript
+interface AlertaVacunacion {
+  id: string;
+  mascota_nombre: string;
+  vacuna_nombre: string;
+  estado: 'vencida' | 'critica' | 'proxima';
+  color: 'red' | 'orange' | 'yellow';
+  dias_restantes: number;
+  prioridad: 'alta' | 'media';
+  responsable_nombre: string;
+  responsable_telefono: string;
+}
+```
+
+### ✅ **Testing Completado:**
+- **Alertas por Color:** ✅ Rojo (vencida), Naranja (crítica), Amarillo (próxima)
+- **Limpieza Automática:** ✅ Alertas >7 días eliminadas automáticamente
+- **Estados:** ✅ Transición aplicada → vencida → completado
+- **Dashboard:** ✅ Estadísticas en tiempo real 
+- **Performance:** ✅ Consultas optimizadas con select_related()
+
+### 🚀 **Resultado Final:**
+**SISTEMA DE ALERTAS DE VACUNACIÓN 100% FUNCIONAL**
+- Dashboard con código de colores ✅
+- Limpieza automática ✅  
+- Estados inteligentes ✅
+- Integración frontend-ready ✅
+- Sistema de historial médico preservado ✅

@@ -24,4 +24,6 @@ urlpatterns = router.urls + [
     path('login/', LoginView.as_view(), name='token_obtain_pair'),
     path('refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     path('trabajadores/registro/', RegistrarTrabajadorView.as_view(), name='registro_trabajador'),
+    # 🚨 Endpoint especializado para alertas de vacunación
+    path('dashboard/alertas-vacunacion/', alertas_dashboard, name='alertas_dashboard'),
 ]

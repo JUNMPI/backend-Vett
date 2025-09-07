@@ -410,7 +410,8 @@ class HistorialVacunacion(models.Model):
         ('vigente', 'Vigente'),
         ('vencida', 'Vencida'),
         ('proxima', 'Próxima'),
-        ('aplicada', 'Aplicada')
+        ('aplicada', 'Aplicada'),
+        ('completado', 'Completado')  # 🆕 Para marcar vacunas reemplazadas/actualizadas
     ]
     
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

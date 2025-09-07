@@ -1,7 +1,7 @@
 from rest_framework import viewsets
 from .models import *
 from .serializers import *
-from rest_framework.decorators import action
+from rest_framework.decorators import action, api_view
 from rest_framework.response import Response
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework.views import APIView
@@ -624,6 +624,26 @@ class VacunaViewSet(viewsets.ModelViewSet):
             'vacuna': serializer.data
         })
     
+    @action(detail=False, methods=['get'], url_path='por-especie/(?P<especie>[^/.]+)')
+    def por_especie(self, request, especie=None):
+        """
+        Obtener vacunas filtradas por especie
+        URL: GET /api/vacunas/por-especie/Perro/
+        """
+        vacunas = Vacuna.objects.filter(
+            especies__contains=[especie],
+            estado__iexact='activo'
+        ).order_by('nombre')
+        
+        serializer = self.get_serializer(vacunas, many=True)
+        return Response({
+            'data': serializer.data,
+            'especie': especie,
+            'total': vacunas.count(),
+            'message': f'Vacunas para {especie} obtenidas exitosamente',
+            'status': 'success'
+        })
+
     @action(detail=False, methods=['get'], url_path='productos-vacunas')
     def productos_vacunas(self, request):
         """
@@ -772,6 +792,203 @@ class HistorialVacunacionViewSet(viewsets.ModelViewSet):
             'vacunas_proximas_30_dias': proximas_30_dias,
             'porcentaje_cumplimiento': round((total_vacunas - vencidas) / total_vacunas * 100, 2) if total_vacunas > 0 else 0
         })
+    
+    @action(detail=False, methods=['post'], url_path='aplicar-vacuna')
+    def aplicar_vacuna(self, request):
+        """
+        Endpoint para aplicar una vacuna con cálculo automático de próxima fecha
+        URL: POST /api/historial-vacunacion/aplicar-vacuna/
+        Body: {
+            "mascota_id": "uuid",
+            "vacuna_id": "uuid", 
+            "fecha_aplicacion": "2025-09-07",
+            "veterinario_id": "uuid",
+            "lote": "L123456",
+            "observaciones": "Primera dosis",
+            "dosis_numero": 1
+        }
+        """
+        from datetime import date
+        from dateutil.relativedelta import relativedelta
+        
+        try:
+            data = request.data
+            
+            # Obtener la vacuna para calcular próxima fecha
+            vacuna_id = data.get('vacuna_id') or data.get('vacuna')  # Acepta ambos formatos
+            vacuna = Vacuna.objects.get(id=vacuna_id)
+            fecha_aplicacion = date.fromisoformat(data['fecha_aplicacion'])
+            
+            # Calcular próxima fecha basada en frecuencia de la vacuna
+            proxima_fecha = fecha_aplicacion + relativedelta(months=vacuna.frecuencia_meses)
+            
+                # 🔄 ACTUALIZAR REGISTROS ANTERIORES DE LA MISMA VACUNA
+            # Marcar registros anteriores como "completados" para eliminar alertas
+            registros_anteriores = HistorialVacunacion.objects.filter(
+                mascota_id=data.get('mascota_id') or data.get('mascota'),
+                vacuna_id=vacuna_id,
+                estado__in=['aplicada', 'vigente', 'vencida', 'proxima']  # Todos los estados activos
+            )
+            
+            # Actualizar estados anteriores a "completado" para que no aparezcan en alertas
+            registros_anteriores.update(estado='completado')
+            
+            # Crear el registro de historial con datos calculados
+            historial_data = {
+                **data,
+                'proxima_fecha': proxima_fecha.isoformat(),
+                'estado': 'aplicada'  # Recién aplicada, será vigente hasta que se acerque próxima fecha
+            }
+            
+            serializer = self.get_serializer(data=historial_data)
+            if serializer.is_valid():
+                historial = serializer.save()
+                
+                return Response({
+                    'data': self.get_serializer(historial).data,
+                    'message': f'Vacuna {vacuna.nombre} aplicada exitosamente',
+                    'proxima_vacuna': {
+                        'fecha': proxima_fecha.isoformat(),
+                        'dias_restantes': (proxima_fecha - date.today()).days,
+                        'meses_frecuencia': vacuna.frecuencia_meses
+                    },
+                    'status': 'success'
+                }, status=201)
+            else:
+                return Response({
+                    'message': 'Error en los datos proporcionados',
+                    'errors': serializer.errors,
+                    'status': 'error'
+                }, status=400)
+                
+        except Vacuna.DoesNotExist:
+            return Response({
+                'message': 'Vacuna no encontrada',
+                'status': 'error'
+            }, status=404)
+        except Exception as e:
+            return Response({
+                'message': f'Error al aplicar vacuna: {str(e)}',
+                'status': 'error'
+            }, status=500)
+
+
+# 🚨 ENDPOINT ESPECIALIZADO PARA DASHBOARD DE ALERTAS
+@api_view(['GET'])
+def alertas_dashboard(request):
+    """
+    Endpoint especializado para alertas del dashboard principal
+    URL: GET /api/dashboard/alertas-vacunacion/
+    Devuelve vacunas vencidas y próximas a vencer con información completa
+    """
+    from datetime import date, timedelta
+    from django.db.models import Q
+    
+    try:
+        # 🧹 LIMPIEZA Y ACTUALIZACIÓN AUTOMÁTICA DE ESTADOS
+        fecha_limpieza = date.today() - timedelta(days=7)
+        fecha_hoy = date.today()
+        fecha_proxima = date.today() + timedelta(days=7)
+        
+        # 1. Limpiar alertas vencidas hace más de 1 semana
+        HistorialVacunacion.objects.filter(
+            proxima_fecha__lte=fecha_limpieza,
+            estado='vencida'
+        ).update(estado='completado')
+        
+        # 2. Actualizar estados según fechas actuales
+        # Marcar como vencidas las que pasaron su fecha
+        HistorialVacunacion.objects.filter(
+            proxima_fecha__lt=fecha_hoy,
+            estado='aplicada'
+        ).update(estado='vencida')
+        
+        # Marcar como próximas las que están en rango de alerta
+        HistorialVacunacion.objects.filter(
+            proxima_fecha__lte=fecha_proxima,
+            proxima_fecha__gte=fecha_hoy,
+            estado='aplicada'
+        ).update(estado='proxima')
+        
+        # Vacunas próximas a vencer (próximos 7 días) y vencidas (máximo 1 semana atrás)
+        fecha_alerta = date.today() + timedelta(days=7)
+        fecha_vencida_limite = date.today() - timedelta(days=7)  # Solo mostrar vencidas de última semana
+        
+        alertas_query = HistorialVacunacion.objects.filter(
+            Q(proxima_fecha__gte=fecha_vencida_limite, proxima_fecha__lt=date.today()) |  # Vencidas (máximo 1 semana)
+            Q(proxima_fecha__lte=fecha_alerta, proxima_fecha__gte=date.today())   # Próximas a vencer (7 días)
+        ).exclude(
+            estado='completado'  # 🚫 EXCLUIR vacunas ya completadas/reemplazadas
+        ).select_related(
+            'mascota', 'vacuna', 'mascota__responsable', 'veterinario'
+        ).order_by('proxima_fecha')
+        
+        alertas_data = []
+        vencidas_count = 0
+        proximas_count = 0
+        
+        for item in alertas_query:
+            dias_restantes = (item.proxima_fecha - date.today()).days
+            
+            if dias_restantes < 0:
+                estado_alert = 'vencida'
+                vencidas_count += 1
+                prioridad = 'alta'
+                color = 'red'
+            elif dias_restantes <= 2:
+                estado_alert = 'critica'
+                proximas_count += 1  
+                prioridad = 'alta'
+                color = 'orange'
+            elif dias_restantes <= 7:
+                estado_alert = 'proxima'
+                proximas_count += 1
+                prioridad = 'media'
+                color = 'yellow'
+            else:
+                continue  # No incluir en alertas
+            
+            alertas_data.append({
+                'id': str(item.id),
+                'mascota_id': str(item.mascota.id),
+                'mascota_nombre': item.mascota.nombreMascota,
+                'mascota_especie': item.mascota.especie,
+                'vacuna_id': str(item.vacuna.id),
+                'vacuna_nombre': item.vacuna.nombre,
+                'es_obligatoria': item.vacuna.es_obligatoria,
+                'fecha_aplicacion': item.fecha_aplicacion,
+                'proxima_fecha': item.proxima_fecha,
+                'dias_restantes': dias_restantes,
+                'estado': estado_alert,
+                'prioridad': prioridad,
+                'dosis_numero': item.dosis_numero,
+                'responsable_nombre': f"{item.mascota.responsable.nombres} {item.mascota.responsable.apellidos}",
+                'responsable_telefono': item.mascota.responsable.telefono,
+                'veterinario_nombre': f"{item.veterinario.trabajador.nombres} {item.veterinario.trabajador.apellidos}" if item.veterinario else None,
+                'color': color
+            })
+        
+        # Estadísticas del resumen
+        estadisticas = {
+            'total_alertas': len(alertas_data),
+            'vencidas': vencidas_count,
+            'proximas': proximas_count,
+            'criticas': len([a for a in alertas_data if a['prioridad'] == 'alta']),
+            'fecha_consulta': date.today().isoformat()
+        }
+        
+        return Response({
+            'data': alertas_data,
+            'estadisticas': estadisticas,
+            'message': f'{len(alertas_data)} alertas de vacunación encontradas',
+            'status': 'success'
+        })
+        
+    except Exception as e:
+        return Response({
+            'message': f'Error al obtener alertas: {str(e)}',
+            'status': 'error'
+        }, status=500)
 
 
 class HistorialMedicoViewSet(viewsets.ModelViewSet):
