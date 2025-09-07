@@ -498,7 +498,64 @@ class VacunaViewSet(viewsets.ModelViewSet):
     serializer_class = VacunaSerializer
     
     def get_queryset(self):
-        return Vacuna.objects.all()
+        queryset = Vacuna.objects.all()
+        
+        # Filtro por estado
+        estado = self.request.query_params.get('estado')
+        if estado and estado != 'todas':
+            queryset = queryset.filter(estado__iexact=estado)
+        
+        # Filtro de búsqueda
+        search = self.request.query_params.get('search')
+        if search:
+            queryset = queryset.filter(
+                Q(nombre__icontains=search) |
+                Q(enfermedad_previene__icontains=search) |
+                Q(especies__icontains=search)
+            )
+        
+        return queryset
+    
+    def list(self, request, *args, **kwargs):
+        """Listado con estadísticas como especifica el frontend"""
+        queryset = self.get_queryset()
+        serializer = self.get_serializer(queryset, many=True)
+        
+        # Estadísticas para el frontend
+        total = Vacuna.objects.count()
+        activas = Vacuna.objects.filter(estado='Activo').count()
+        inactivas = Vacuna.objects.filter(estado='Inactivo').count()
+        obligatorias = Vacuna.objects.filter(es_obligatoria=True).count()
+        
+        return Response({
+            'data': serializer.data,
+            'estadisticas': {
+                'total': total,
+                'activas': activas, 
+                'inactivas': inactivas,
+                'obligatorias': obligatorias
+            },
+            'message': 'Vacunas obtenidas exitosamente',
+            'status': 'success'
+        })
+    
+    def create(self, request, *args, **kwargs):
+        """Crear con formato de respuesta específico"""
+        serializer = self.get_serializer(data=request.data)
+        if serializer.is_valid():
+            vacuna = serializer.save()
+            return Response({
+                'data': serializer.data,
+                'message': 'Vacuna creada exitosamente',
+                'status': 'success'
+            }, status=status.HTTP_201_CREATED)
+        
+        return Response({
+            'data': None,
+            'message': 'Error al crear vacuna',
+            'errors': serializer.errors,
+            'status': 'error'
+        }, status=status.HTTP_400_BAD_REQUEST)
     
     @action(detail=False, methods=['get'], url_path='activas')
     def activas(self, request):
@@ -597,6 +654,24 @@ class VacunaViewSet(viewsets.ModelViewSet):
         
         serializer = ProductoSerializer(productos, many=True)
         return Response(serializer.data)
+    
+    @action(detail=True, methods=['post'], url_path='cambiar-estado')
+    def cambiar_estado_vacuna(self, request, pk=None):
+        """
+        Endpoint específico para cambiar estado como especifica el frontend
+        URL: POST /api/vacunas/{id}/cambiar-estado/
+        """
+        vacuna = self.get_object()
+        nuevo_estado = 'Inactivo' if vacuna.estado == 'Activo' else 'Activo'
+        vacuna.estado = nuevo_estado
+        vacuna.save()
+        
+        serializer = self.get_serializer(vacuna)
+        return Response({
+            'data': serializer.data,
+            'message': f'Estado cambiado a {nuevo_estado}',
+            'status': 'success'
+        })
 
 
 class HistorialVacunacionViewSet(viewsets.ModelViewSet):

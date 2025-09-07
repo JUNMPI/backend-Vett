@@ -348,15 +348,20 @@ class VacunaSerializer(serializers.ModelSerializer):
         allow_null=True
     )
     producto_inventario_info = serializers.SerializerMethodField()
+    especies_aplicables = serializers.SerializerMethodField()
     
     class Meta:
         model = Vacuna
         fields = [
-            'id', 'nombre', 'especies', 'frecuencia_meses', 'es_obligatoria',
+            'id', 'nombre', 'especies', 'especies_aplicables', 'frecuencia_meses', 'es_obligatoria',
             'edad_minima_semanas', 'enfermedad_previene', 'dosis_total',
             'intervalo_dosis_semanas', 'estado', 'producto_inventario',
             'producto_inventario_info', 'creado', 'actualizado'
         ]
+    
+    def get_especies_aplicables(self, obj):
+        """Campo especies_aplicables que mapea al campo especies para compatibilidad con el frontend"""
+        return obj.especies if obj.especies else []
     
     def get_producto_inventario_info(self, obj):
         """Información completa del producto de inventario relacionado"""
