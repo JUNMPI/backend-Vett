@@ -355,8 +355,7 @@ class ProductoViewSet(viewsets.ModelViewSet):
                 Q(proveedor__icontains=search)
             )
         
-        # Limitar a 20 resultados
-        productos_vacunas = productos_vacunas[:20]
+        # Sin límite - mostrar todos los productos disponibles
         
         serializer = self.get_serializer(productos_vacunas, many=True)
         return Response(serializer.data)
@@ -649,8 +648,7 @@ class VacunaViewSet(viewsets.ModelViewSet):
                 Q(descripcion__icontains=search)
             )
         
-        # Limitar resultados para el dropdown
-        productos = productos[:10]
+        # Sin límite - mostrar todos los productos disponibles
         
         serializer = ProductoSerializer(productos, many=True)
         return Response(serializer.data)
