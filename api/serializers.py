@@ -356,7 +356,9 @@ class VacunaSerializer(serializers.ModelSerializer):
             'id', 'nombre', 'especies', 'especies_aplicables', 'frecuencia_meses', 'es_obligatoria',
             'edad_minima_semanas', 'enfermedad_previene', 'dosis_total',
             'intervalo_dosis_semanas', 'estado', 'producto_inventario',
-            'producto_inventario_info', 'creado', 'actualizado'
+            'producto_inventario_info', 'creado', 'actualizado',
+            # 🆕 NUEVOS CAMPOS PARA PROTOCOLOS AVANZADOS
+            'protocolo_dosis', 'max_dias_atraso', 'protocolo_cachorro'
         ]
     
     def get_especies_aplicables(self, obj):

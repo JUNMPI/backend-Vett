@@ -377,6 +377,26 @@ class Vacuna(models.Model):
         default=3,
         help_text="Semanas entre dosis del protocolo inicial"
     )
+    
+    # 🆕 PROTOCOLO EXTENSIBLE PARA CASOS COMPLEJOS
+    protocolo_dosis = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Protocolo detallado: [{'dosis': 1, 'semanas_siguiente': 3}, {'dosis': 2, 'semanas_siguiente': 4}] - Si está vacío, usa dosis_total e intervalo_dosis_semanas"
+    )
+    
+    # 🆕 CONFIGURACIÓN DE DOSIS ATRASADAS  
+    max_dias_atraso = models.IntegerField(
+        default=14,
+        help_text="Días máximos de atraso antes de reiniciar protocolo"
+    )
+    
+    # 🆕 PROTOCOLO POR EDAD
+    protocolo_cachorro = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Protocolo especial para cachorros: {'dosis_total': 4, 'intervalos': [3, 3, 4]} - Si está vacío, usa protocolo estándar"
+    )
     estado = models.CharField(
         max_length=10,
         choices=Estado.ESTADO_CHOICES,
@@ -411,7 +431,8 @@ class HistorialVacunacion(models.Model):
         ('vencida', 'Vencida'),
         ('proxima', 'Próxima'),
         ('aplicada', 'Aplicada'),
-        ('completado', 'Completado')  # 🆕 Para marcar vacunas reemplazadas/actualizadas
+        ('completado', 'Completado'),  # 🆕 Para marcar vacunas reemplazadas/actualizadas
+        ('vencida_reinicio', 'Vencida - Protocolo Reiniciado')  # 🆕 Para dosis atrasadas que requieren reinicio
     ]
     
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
