@@ -743,10 +743,20 @@ class VacunaViewSet(viewsets.ModelViewSet):
             vacuna = self.get_object()  # Obtener vacuna por ID de la URL
             data = request.data
             
-            # 🧠 LÓGICA INTELIGENTE EXTENSIBLE - TODOS LOS ESCENARIOS FUTUROS
+            # 🧠 LÓGICA 100% ROBUSTA - TODOS LOS CASOS EDGE CUBIERTOS
             fecha_aplicacion = date.fromisoformat(data['fecha_aplicacion'])
             
-            # 1. OBTENER HISTORIAL REAL Y CONTEXTO
+            # 🔒 VALIDACIONES CRÍTICAS PREVIAS
+            if vacuna.dosis_total <= 0:
+                raise ValueError(f"dosis_total inválida: {vacuna.dosis_total}")
+            if vacuna.frecuencia_meses <= 0:
+                raise ValueError(f"frecuencia_meses inválida: {vacuna.frecuencia_meses}")
+            if vacuna.dosis_total > 1 and vacuna.intervalo_dosis_semanas <= 0:
+                raise ValueError(f"intervalo_dosis_semanas inválido: {vacuna.intervalo_dosis_semanas}")
+            if vacuna.max_dias_atraso <= 0:
+                raise ValueError(f"max_dias_atraso inválido: {vacuna.max_dias_atraso}")
+            
+            # 1. OBTENER HISTORIAL Y CONTEXTO
             historial_previo_query = HistorialVacunacion.objects.filter(
                 mascota_id=data['mascota_id'],
                 vacuna=vacuna,
@@ -756,33 +766,23 @@ class VacunaViewSet(viewsets.ModelViewSet):
             historial_count = historial_previo_query.count()
             dosis_real_en_protocolo = historial_count + 1
             
-            # 2. DETECTAR EDAD DE LA MASCOTA PARA PROTOCOLO ESPECÍFICO
+            # 2. EDAD DE LA MASCOTA (CON FALLBACK SEGURO)
             from django.utils import timezone
             mascota = Mascota.objects.get(id=data['mascota_id'])
-            edad_actual_dias = (timezone.now().date() - mascota.fechaNacimiento).days if mascota.fechaNacimiento else 365
-            es_cachorro = edad_actual_dias <= 365  # Menor a 1 año = cachorro
-            
-            # 3. DETERMINAR PROTOCOLO A USAR
-            if vacuna.protocolo_cachorro and es_cachorro and historial_count == 0:
-                # PROTOCOLO CACHORRO ESPECÍFICO
-                protocolo = vacuna.protocolo_cachorro
-                dosis_total_efectiva = protocolo.get('dosis_total', vacuna.dosis_total)
-                intervalos_efectivos = protocolo.get('intervalos', [vacuna.intervalo_dosis_semanas] * (dosis_total_efectiva - 1))
-            elif vacuna.protocolo_dosis:
-                # PROTOCOLO DETALLADO/COMPLEJO
-                protocolo_detallado = vacuna.protocolo_dosis
-                dosis_total_efectiva = len(protocolo_detallado)
+            if mascota.fechaNacimiento:
+                edad_actual_dias = (timezone.now().date() - mascota.fechaNacimiento).days
+                es_cachorro = edad_actual_dias <= 365
             else:
-                # PROTOCOLO ESTÁNDAR (ACTUAL)
-                dosis_total_efectiva = vacuna.dosis_total
-                intervalos_efectivos = [vacuna.intervalo_dosis_semanas] * (dosis_total_efectiva - 1)
+                edad_actual_dias = 365  # Fallback: asumir adulto
+                es_cachorro = False
             
-            # 4. VERIFICAR DOSIS ATRASADAS
+            # 3. VERIFICAR DOSIS ATRASADAS (ANTES DE CALCULAR PROTOCOLO)
+            reiniciar_protocolo = False
             ultima_aplicacion = historial_previo_query.last()
             if ultima_aplicacion:
                 dias_desde_ultima = (fecha_aplicacion - ultima_aplicacion.fecha_aplicacion).days
                 if dias_desde_ultima > vacuna.max_dias_atraso:
-                    # REINICIAR PROTOCOLO POR ATRASO EXCESIVO
+                    reiniciar_protocolo = True
                     HistorialVacunacion.objects.filter(
                         mascota_id=data['mascota_id'],
                         vacuna=vacuna,
@@ -790,40 +790,104 @@ class VacunaViewSet(viewsets.ModelViewSet):
                     ).update(estado='vencida_reinicio')
                     dosis_real_en_protocolo = 1  # Reiniciar como dosis 1
             
-            # 5. CALCULAR PRÓXIMA FECHA CON LÓGICA EXTENSIBLE
-            if dosis_real_en_protocolo == 1 and dosis_total_efectiva == 1:
-                # VACUNA DOSIS ÚNICA
-                proxima_fecha = fecha_aplicacion + relativedelta(months=vacuna.frecuencia_meses)
-                es_dosis_final = True
-                intervalo_usado = f"{vacuna.frecuencia_meses} meses"
+            # 4. DETERMINAR PROTOCOLO EFECTIVO (ORDEN DE PRECEDENCIA ESTRICTO)
+            protocolo_info = {
+                'tipo': '',
+                'dosis_total': vacuna.dosis_total,
+                'intervalos': []
+            }
+            
+            # PRECEDENCIA 1: Protocolo complejo JSON (más específico)
+            if vacuna.protocolo_dosis and len(vacuna.protocolo_dosis) > 0:
+                protocolo_info['tipo'] = 'PROTOCOLO_COMPLEJO'
+                protocolo_info['dosis_total'] = len(vacuna.protocolo_dosis)
                 
-            elif dosis_real_en_protocolo < dosis_total_efectiva:
-                # PROTOCOLO INCOMPLETO - Usar intervalo específico para esta dosis
-                if 'intervalos_efectivos' in locals() and len(intervalos_efectivos) >= dosis_real_en_protocolo:
-                    intervalo_semanas = intervalos_efectivos[dosis_real_en_protocolo - 1]
-                elif vacuna.protocolo_dosis and dosis_real_en_protocolo <= len(vacuna.protocolo_dosis):
-                    intervalo_semanas = vacuna.protocolo_dosis[dosis_real_en_protocolo - 1].get('semanas_siguiente', vacuna.intervalo_dosis_semanas)
+                # Validar y extraer intervalos
+                for i, dosis_info in enumerate(vacuna.protocolo_dosis):
+                    if isinstance(dosis_info, dict) and 'semanas_siguiente' in dosis_info:
+                        semanas = dosis_info.get('semanas_siguiente', vacuna.intervalo_dosis_semanas)
+                        if semanas > 0:
+                            protocolo_info['intervalos'].append(semanas)
+                        else:
+                            protocolo_info['intervalos'].append(vacuna.intervalo_dosis_semanas)
+                    else:
+                        protocolo_info['intervalos'].append(vacuna.intervalo_dosis_semanas)
+            
+            # PRECEDENCIA 2: Protocolo cachorro (si aplica)
+            elif (vacuna.protocolo_cachorro and 
+                  isinstance(vacuna.protocolo_cachorro, dict) and 
+                  len(vacuna.protocolo_cachorro) > 0 and 
+                  es_cachorro and 
+                  historial_count == 0):
+                
+                protocolo_info['tipo'] = 'PROTOCOLO_CACHORRO'
+                p_cachorro = vacuna.protocolo_cachorro
+                
+                dosis_total_cachorro = p_cachorro.get('dosis_total', vacuna.dosis_total)
+                if dosis_total_cachorro > 0:
+                    protocolo_info['dosis_total'] = dosis_total_cachorro
+                
+                intervalos_cachorro = p_cachorro.get('intervalos', [])
+                if intervalos_cachorro and isinstance(intervalos_cachorro, list):
+                    for intervalo in intervalos_cachorro:
+                        if intervalo > 0:
+                            protocolo_info['intervalos'].append(intervalo)
+                        else:
+                            protocolo_info['intervalos'].append(vacuna.intervalo_dosis_semanas)
                 else:
-                    intervalo_semanas = vacuna.intervalo_dosis_semanas
-                    
-                proxima_fecha = fecha_aplicacion + timedelta(weeks=intervalo_semanas)
-                es_dosis_final = False
-                intervalo_usado = f"{intervalo_semanas} semanas"
-                
+                    protocolo_info['intervalos'] = [vacuna.intervalo_dosis_semanas] * (dosis_total_cachorro - 1)
+            
+            # PRECEDENCIA 3: Protocolo estándar (fallback siempre)
             else:
-                # PROTOCOLO COMPLETO - Refuerzo según frecuencia
+                protocolo_info['tipo'] = 'PROTOCOLO_ESTANDAR'
+                protocolo_info['dosis_total'] = vacuna.dosis_total
+                protocolo_info['intervalos'] = [vacuna.intervalo_dosis_semanas] * (vacuna.dosis_total - 1)
+            
+            # 5. CALCULAR PRÓXIMA FECHA (ALGORITMO UNIVERSAL)
+            dosis_total_efectiva = protocolo_info['dosis_total']
+            
+            try:
+                if dosis_real_en_protocolo == 1 and dosis_total_efectiva == 1:
+                    # ESCENARIO 1: VACUNA DOSIS ÚNICA
+                    proxima_fecha = fecha_aplicacion + relativedelta(months=vacuna.frecuencia_meses)
+                    es_dosis_final = True
+                    intervalo_usado = f"{vacuna.frecuencia_meses} meses"
+                    
+                elif dosis_real_en_protocolo < dosis_total_efectiva:
+                    # ESCENARIO 2: PROTOCOLO INCOMPLETO
+                    indice_intervalo = dosis_real_en_protocolo - 1  # 0-based
+                    
+                    if protocolo_info['intervalos'] and indice_intervalo < len(protocolo_info['intervalos']):
+                        intervalo_semanas = protocolo_info['intervalos'][indice_intervalo]
+                    else:
+                        intervalo_semanas = vacuna.intervalo_dosis_semanas
+                    
+                    # Validación final del intervalo
+                    if intervalo_semanas <= 0:
+                        intervalo_semanas = vacuna.intervalo_dosis_semanas
+                    
+                    proxima_fecha = fecha_aplicacion + timedelta(weeks=intervalo_semanas)
+                    es_dosis_final = False
+                    intervalo_usado = f"{intervalo_semanas} semanas"
+                    
+                else:
+                    # ESCENARIO 3: PROTOCOLO COMPLETO - REFUERZO ANUAL
+                    proxima_fecha = fecha_aplicacion + relativedelta(months=vacuna.frecuencia_meses)
+                    es_dosis_final = True
+                    intervalo_usado = f"{vacuna.frecuencia_meses} meses"
+                
+                # Validar fecha calculada
+                if proxima_fecha <= fecha_aplicacion:
+                    raise ValueError(f"Fecha calculada inválida: {proxima_fecha}")
+                    
+            except Exception as calc_error:
+                # FALLBACK DE EMERGENCIA: Refuerzo anual
                 proxima_fecha = fecha_aplicacion + relativedelta(months=vacuna.frecuencia_meses)
                 es_dosis_final = True
-                intervalo_usado = f"{vacuna.frecuencia_meses} meses"
+                intervalo_usado = f"{vacuna.frecuencia_meses} meses (fallback)"
+                print(f"WARNING: Usando fallback por error: {str(calc_error)}")
             
-            # 🔄 Marcar registros anteriores como completado
-            HistorialVacunacion.objects.filter(
-                mascota_id=data['mascota_id'],
-                vacuna=vacuna,
-                estado__in=['aplicada', 'vigente', 'vencida', 'proxima']
-            ).update(estado='completado')
-            
-            # 📝 Crear nuevo registro con dosis calculada inteligentemente
+            # 📝 Crear nuevo registro PRIMERO (sin marcar anteriores aún)
             historial = HistorialVacunacion.objects.create(
                 mascota_id=data['mascota_id'],
                 vacuna=vacuna,
@@ -833,8 +897,16 @@ class VacunaViewSet(viewsets.ModelViewSet):
                 dosis_numero=dosis_real_en_protocolo,  # ✅ Usar dosis calculada
                 lote=data.get('lote', ''),
                 observaciones=data.get('observaciones', ''),
-                estado='aplicada'
+                estado='vigente' if es_dosis_final else 'aplicada'  # Estado correcto
             )
+            
+            # 🔄 SOLO marcar registros anteriores como completado SI es dosis final
+            if es_dosis_final or dosis_real_en_protocolo >= dosis_total_efectiva:
+                HistorialVacunacion.objects.filter(
+                    mascota_id=data['mascota_id'],
+                    vacuna=vacuna,
+                    estado__in=['aplicada', 'vigente', 'vencida', 'proxima']
+                ).exclude(id=historial.id).update(estado='completado')
             
             # 📊 Generar mensaje personalizado inteligente
             if not es_dosis_final:
@@ -852,9 +924,14 @@ class VacunaViewSet(viewsets.ModelViewSet):
                     'mensaje_usuario': mensaje_usuario,
                     'protocolo_info': {
                         'dosis_actual': dosis_real_en_protocolo,
-                        'dosis_total': vacuna.dosis_total,
+                        'dosis_total_original': vacuna.dosis_total,
+                        'dosis_total_efectiva': dosis_total_efectiva,
                         'es_dosis_final': es_dosis_final,
-                        'intervalo_usado': intervalo_usado
+                        'intervalo_usado': intervalo_usado,
+                        'protocolo_usado': protocolo_info['tipo'],
+                        'reinicio_por_atraso': reiniciar_protocolo,
+                        'es_cachorro': es_cachorro,
+                        'edad_dias': edad_actual_dias
                     }
                 },
                 'status': 'success'

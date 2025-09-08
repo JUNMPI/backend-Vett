@@ -156,3 +156,11 @@ staticfiles/
 # Migration files (optional - you might want to include these)
 # */migrations/*.py
 # !*/migrations/__init__.py
+
+# Test and temporary files
+test_*.py
+aplicar_*.py
+crear_*.py
+corregir_*.py
+analyze_*.py
+nul

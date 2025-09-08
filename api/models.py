@@ -498,14 +498,8 @@ class HistorialVacunacion(models.Model):
     def __str__(self):
         return f"{self.mascota} - {self.vacuna} ({self.fecha_aplicacion})"
 
-    def save(self, *args, **kwargs):
-        # Calcular automáticamente la próxima fecha
-        if self.fecha_aplicacion and self.vacuna:
-            from datetime import timedelta
-            dias_proxima = self.vacuna.frecuencia_meses * 30  # Aproximación
-            self.proxima_fecha = self.fecha_aplicacion + timedelta(days=dias_proxima)
-        
-        super().save(*args, **kwargs)
+    # NOTA: El cálculo de proxima_fecha se hace en views.py/aplicar() con lógica inteligente
+    # No usar save() override para evitar conflictos con la lógica compleja
 
     def esta_vencida(self):
         """Verifica si la vacuna está vencida"""
