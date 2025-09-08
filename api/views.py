@@ -776,26 +776,15 @@ class VacunaViewSet(viewsets.ModelViewSet):
                 edad_actual_dias = 365  # Fallback: asumir adulto
                 es_cachorro = False
             
-            # 3. VERIFICAR DOSIS ATRASADAS (ANTES DE CALCULAR PROTOCOLO)
-            reiniciar_protocolo = False
-            ultima_aplicacion = historial_previo_query.last()
-            if ultima_aplicacion:
-                dias_desde_ultima = (fecha_aplicacion - ultima_aplicacion.fecha_aplicacion).days
-                if dias_desde_ultima > vacuna.max_dias_atraso:
-                    reiniciar_protocolo = True
-                    HistorialVacunacion.objects.filter(
-                        mascota_id=data['mascota_id'],
-                        vacuna=vacuna,
-                        estado__in=['aplicada', 'vigente']
-                    ).update(estado='vencida_reinicio')
-                    dosis_real_en_protocolo = 1  # Reiniciar como dosis 1
-            
-            # 4. DETERMINAR PROTOCOLO EFECTIVO (ORDEN DE PRECEDENCIA ESTRICTO)
+            # 3. DETERMINAR PROTOCOLO EFECTIVO PRIMERO (ORDEN DE PRECEDENCIA ESTRICTO)
             protocolo_info = {
                 'tipo': '',
                 'dosis_total': vacuna.dosis_total,
                 'intervalos': []
             }
+            
+            # Variables para verificación de atraso inteligente
+            reiniciar_protocolo = False
             
             # PRECEDENCIA 1: Protocolo complejo JSON (más específico)
             if vacuna.protocolo_dosis and len(vacuna.protocolo_dosis) > 0:
@@ -842,6 +831,32 @@ class VacunaViewSet(viewsets.ModelViewSet):
                 protocolo_info['tipo'] = 'PROTOCOLO_ESTANDAR'
                 protocolo_info['dosis_total'] = vacuna.dosis_total
                 protocolo_info['intervalos'] = [vacuna.intervalo_dosis_semanas] * (vacuna.dosis_total - 1)
+            
+            # 4. VERIFICAR DOSIS ATRASADAS CON PROTOCOLO INTELIGENTE
+            ultima_aplicacion = historial_previo_query.last()
+            if ultima_aplicacion and historial_count > 0:
+                dias_desde_ultima = (fecha_aplicacion - ultima_aplicacion.fecha_aplicacion).days
+                
+                # Calcular máximo atraso permitido según el protocolo actual
+                dosis_previa = historial_count  # La dosis anterior (1-based)
+                
+                if protocolo_info['intervalos'] and dosis_previa <= len(protocolo_info['intervalos']):
+                    # Usar intervalo específico del protocolo
+                    intervalo_esperado_semanas = protocolo_info['intervalos'][dosis_previa - 1]
+                    max_atraso_dinamico = (intervalo_esperado_semanas * 7) + 21  # Intervalo + 3 semanas tolerancia
+                else:
+                    # Fallback: usar configuración base
+                    max_atraso_dinamico = vacuna.max_dias_atraso
+                
+                if dias_desde_ultima > max_atraso_dinamico:
+                    reiniciar_protocolo = True
+                    HistorialVacunacion.objects.filter(
+                        mascota_id=data['mascota_id'],
+                        vacuna=vacuna,
+                        estado__in=['aplicada', 'vigente']
+                    ).update(estado='vencida_reinicio')
+                    dosis_real_en_protocolo = 1  # Reiniciar como dosis 1
+                    print(f"Protocolo reiniciado: {dias_desde_ultima} días > {max_atraso_dinamico} días permitidos")
             
             # 5. CALCULAR PRÓXIMA FECHA (ALGORITMO UNIVERSAL)
             dosis_total_efectiva = protocolo_info['dosis_total']
