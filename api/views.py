@@ -1145,6 +1145,28 @@ def alertas_dashboard(request):
         }, status=500)
 
 
+@api_view(['GET'])
+def get_veterinario_externo(request):
+    """
+    Obtener ID del veterinario externo creado automáticamente por migración
+    Para casos de historial de vacunación previo
+    URL: GET /api/veterinario-externo/
+    """
+    try:
+        veterinario_externo = Veterinario.objects.get(
+            trabajador__email='externo@veterinaria.com'
+        )
+        return Response({
+            'veterinario_externo_id': str(veterinario_externo.id),
+            'nombre': f"{veterinario_externo.trabajador.nombres} {veterinario_externo.trabajador.apellidos}",
+            'mensaje': 'Veterinario para historial de vacunación externa'
+        })
+    except Veterinario.DoesNotExist:
+        return Response({
+            'error': 'Veterinario externo no encontrado. Verifica que la migración se ejecutó correctamente.'
+        }, status=404)
+
+
 class HistorialMedicoViewSet(viewsets.ModelViewSet):
     """
     ViewSet para gestión del historial médico

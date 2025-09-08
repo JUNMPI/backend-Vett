@@ -26,4 +26,6 @@ urlpatterns = router.urls + [
     path('trabajadores/registro/', RegistrarTrabajadorView.as_view(), name='registro_trabajador'),
     # 🚨 Endpoint especializado para alertas de vacunación
     path('dashboard/alertas-vacunacion/', alertas_dashboard, name='alertas_dashboard'),
+    # 🏥 Endpoint para obtener veterinario externo
+    path('veterinario-externo/', get_veterinario_externo, name='veterinario-externo'),
 ]
