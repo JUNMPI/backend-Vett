@@ -1223,7 +1223,8 @@ def alertas_dashboard(request):
         
         alertas_query = HistorialVacunacion.objects.filter(
             Q(proxima_fecha__gte=fecha_vencida_limite, proxima_fecha__lt=date.today()) |  # Vencidas (máximo 1 semana)
-            Q(proxima_fecha__lte=fecha_alerta, proxima_fecha__gte=date.today())   # Próximas a vencer (7 días)
+            Q(proxima_fecha__lte=fecha_alerta, proxima_fecha__gte=date.today()) |   # Próximas a vencer (7 días)
+            Q(estado='vencida_reinicio')  # 🆕 INCLUIR vacunas que necesitan reinicio
         ).exclude(
             estado='completado'  # 🚫 EXCLUIR vacunas ya completadas/reemplazadas
         ).select_related(
@@ -1237,7 +1238,13 @@ def alertas_dashboard(request):
         for item in alertas_query:
             dias_restantes = (item.proxima_fecha - date.today()).days
             
-            if dias_restantes < 0:
+            # 🚨 MANEJAR ESTADO VENCIDA_REINICIO CON PRIORIDAD MÁXIMA
+            if item.estado == 'vencida_reinicio':
+                estado_alert = 'vencida'
+                vencidas_count += 1
+                prioridad = 'critica'  # Máxima prioridad para reinicio
+                color = 'red'
+            elif dias_restantes < 0:
                 estado_alert = 'vencida'
                 vencidas_count += 1
                 prioridad = 'alta'
