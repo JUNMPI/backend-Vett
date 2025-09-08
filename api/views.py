@@ -393,6 +393,36 @@ class MascotaViewSet(viewsets.ModelViewSet):
         # Devolvemos la respuesta en formato JSON
         return Response({'total': count})
     
+    @action(detail=True, methods=['get'], url_path='historial-vacunacion')
+    def historial_vacunacion(self, request, pk=None):
+        """
+        🐾 ENDPOINT PARA FRONTEND: Historial de vacunación por mascota
+        URL: GET /api/mascotas/{id}/historial-vacunacion/
+        Devuelve historial completo con nombres de vacuna y veterinario
+        """
+        from .models import HistorialVacunacion
+        from .serializers import HistorialVacunacionSerializer
+        
+        mascota = self.get_object()
+        
+        # Obtener historial de vacunación de esta mascota
+        historial = HistorialVacunacion.objects.filter(
+            mascota=mascota
+        ).select_related(
+            'vacuna', 'veterinario', 'veterinario__trabajador'
+        ).order_by('-fecha_aplicacion')
+        
+        # Usar el serializer que ya tiene los campos correctos
+        serializer = HistorialVacunacionSerializer(historial, many=True)
+        
+        return Response({
+            'mascota_id': str(mascota.id),
+            'mascota_nombre': mascota.nombreMascota,
+            'total_vacunas': historial.count(),
+            'historial': serializer.data,
+            'status': 'success'
+        })
+    
 class ResponsableViewSet(viewsets.ModelViewSet):
     queryset = Responsable.objects.all()
     serializer_class = ResponsableSerializer
@@ -690,6 +720,91 @@ class VacunaViewSet(viewsets.ModelViewSet):
             'message': f'Estado cambiado a {nuevo_estado}',
             'status': 'success'
         })
+    
+    @action(detail=True, methods=['post'], url_path='aplicar')
+    def aplicar(self, request, pk=None):
+        """
+        🎯 ENDPOINT PRINCIPAL: Aplicar vacuna con cálculo automático inteligente
+        URL: POST /api/vacunas/{id}/aplicar/
+        Body: {
+            "mascota_id": "uuid",
+            "fecha_aplicacion": "2025-01-15",
+            "dosis_numero": 1,
+            "veterinario_id": "uuid",
+            "observaciones": "",
+            "lote": "ABC123"
+        }
+        """
+        from datetime import date
+        from dateutil.relativedelta import relativedelta
+        from datetime import timedelta
+        
+        try:
+            vacuna = self.get_object()  # Obtener vacuna por ID de la URL
+            data = request.data
+            
+            # 🧠 APLICAR LÓGICA INTELIGENTE
+            fecha_aplicacion = date.fromisoformat(data['fecha_aplicacion'])
+            dosis_numero = data.get('dosis_numero', 1)
+            
+            # Calcular próxima fecha usando algoritmo inteligente
+            if dosis_numero < vacuna.dosis_total:
+                # Próxima dosis del mismo ciclo inicial
+                proxima_fecha = fecha_aplicacion + timedelta(weeks=vacuna.intervalo_dosis_semanas)
+            else:
+                # Último refuerzo: próximo ciclo anual
+                proxima_fecha = fecha_aplicacion + relativedelta(months=vacuna.frecuencia_meses)
+            
+            # 🔄 Marcar registros anteriores como completado
+            HistorialVacunacion.objects.filter(
+                mascota_id=data['mascota_id'],
+                vacuna=vacuna,
+                estado__in=['aplicada', 'vigente', 'vencida', 'proxima']
+            ).update(estado='completado')
+            
+            # 📝 Crear nuevo registro
+            historial = HistorialVacunacion.objects.create(
+                mascota_id=data['mascota_id'],
+                vacuna=vacuna,
+                fecha_aplicacion=fecha_aplicacion,
+                proxima_fecha=proxima_fecha,
+                veterinario_id=data['veterinario_id'],
+                dosis_numero=dosis_numero,
+                lote=data.get('lote', ''),
+                observaciones=data.get('observaciones', ''),
+                estado='aplicada'
+            )
+            
+            # 📊 Generar mensaje personalizado
+            if dosis_numero < vacuna.dosis_total:
+                mensaje_usuario = f"Próxima dosis (#{dosis_numero + 1}) en {vacuna.intervalo_dosis_semanas} semanas"
+            else:
+                mensaje_usuario = f"Próximo refuerzo en {vacuna.frecuencia_meses} meses"
+            
+            return Response({
+                'success': True,
+                'message': f'Vacuna {vacuna.nombre} aplicada correctamente',
+                'data': {
+                    'historial_id': str(historial.id),
+                    'proxima_fecha': proxima_fecha.isoformat(),
+                    'proxima_fecha_calculada': True,
+                    'mensaje_usuario': mensaje_usuario,
+                    'protocolo_info': {
+                        'dosis_actual': dosis_numero,
+                        'dosis_total': vacuna.dosis_total,
+                        'es_dosis_final': dosis_numero >= vacuna.dosis_total,
+                        'intervalo_usado': f"{vacuna.intervalo_dosis_semanas} semanas" if dosis_numero < vacuna.dosis_total else f"{vacuna.frecuencia_meses} meses"
+                    }
+                },
+                'status': 'success'
+            }, status=201)
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'message': f'Error al aplicar vacuna: {str(e)}',
+                'status': 'error'
+            }, status=400)
 
 
 class HistorialVacunacionViewSet(viewsets.ModelViewSet):
@@ -698,6 +813,30 @@ class HistorialVacunacionViewSet(viewsets.ModelViewSet):
     """
     queryset = HistorialVacunacion.objects.all()
     serializer_class = HistorialVacunacionSerializer
+    
+    def calcular_proxima_fecha(self, vacuna, fecha_aplicacion, dosis_numero):
+        """
+        🧠 ALGORITMO INTELIGENTE: Calcula próxima fecha según protocolo de vacunación
+        
+        LÓGICA:
+        - Si dosis_numero < dosis_total: Próxima dosis del mismo ciclo (+intervalo_dosis_semanas)
+        - Si dosis_numero >= dosis_total: Último refuerzo anual (+frecuencia_meses)
+        
+        EJEMPLOS:
+        - Rabia (1 dosis, refuerzo anual): Dosis 1 → +12 meses
+        - Triple (3 dosis + refuerzo): Dosis 1,2 → +4 semanas | Dosis 3 → +12 meses
+        """
+        from datetime import timedelta
+        from dateutil.relativedelta import relativedelta
+        
+        if dosis_numero < vacuna.dosis_total:
+            # 📅 Próxima dosis del mismo ciclo inicial
+            proxima_fecha = fecha_aplicacion + timedelta(weeks=vacuna.intervalo_dosis_semanas)
+            return proxima_fecha
+        else:
+            # 📅 Último refuerzo: próximo ciclo anual
+            proxima_fecha = fecha_aplicacion + relativedelta(months=vacuna.frecuencia_meses)
+            return proxima_fecha
     
     def get_queryset(self):
         mascota_id = self.request.query_params.get('mascota_id')
@@ -819,8 +958,9 @@ class HistorialVacunacionViewSet(viewsets.ModelViewSet):
             vacuna = Vacuna.objects.get(id=vacuna_id)
             fecha_aplicacion = date.fromisoformat(data['fecha_aplicacion'])
             
-            # Calcular próxima fecha basada en frecuencia de la vacuna
-            proxima_fecha = fecha_aplicacion + relativedelta(months=vacuna.frecuencia_meses)
+            # 🧠 LÓGICA INTELIGENTE: Calcular próxima fecha según protocolo de vacunación
+            dosis_numero = data.get('dosis_numero', 1)
+            proxima_fecha = self.calcular_proxima_fecha(vacuna, fecha_aplicacion, dosis_numero)
             
                 # 🔄 ACTUALIZAR REGISTROS ANTERIORES DE LA MISMA VACUNA
             # Marcar registros anteriores como "completados" para eliminar alertas
@@ -844,13 +984,27 @@ class HistorialVacunacionViewSet(viewsets.ModelViewSet):
             if serializer.is_valid():
                 historial = serializer.save()
                 
+                # 📊 GENERAR MENSAJE PERSONALIZADO SEGÚN PROTOCOLO
+                dias_restantes = (proxima_fecha - fecha_aplicacion).days
+                if dosis_numero < vacuna.dosis_total:
+                    mensaje_usuario = f"Próxima dosis (#{dosis_numero + 1}) en {vacuna.intervalo_dosis_semanas} semanas"
+                else:
+                    mensaje_usuario = f"Próximo refuerzo en {vacuna.frecuencia_meses} meses"
+                
                 return Response({
-                    'data': self.get_serializer(historial).data,
-                    'message': f'Vacuna {vacuna.nombre} aplicada exitosamente',
-                    'proxima_vacuna': {
-                        'fecha': proxima_fecha.isoformat(),
-                        'dias_restantes': (proxima_fecha - date.today()).days,
-                        'meses_frecuencia': vacuna.frecuencia_meses
+                    'success': True,
+                    'message': f'Vacuna {vacuna.nombre} aplicada correctamente',
+                    'data': {
+                        'historial_id': str(historial.id),
+                        'proxima_fecha': proxima_fecha.isoformat(),
+                        'proxima_fecha_calculada': True,
+                        'mensaje_usuario': mensaje_usuario,
+                        'protocolo_info': {
+                            'dosis_actual': dosis_numero,
+                            'dosis_total': vacuna.dosis_total,
+                            'es_dosis_final': dosis_numero >= vacuna.dosis_total,
+                            'intervalo_usado': f"{vacuna.intervalo_dosis_semanas} semanas" if dosis_numero < vacuna.dosis_total else f"{vacuna.frecuencia_meses} meses"
+                        }
                     },
                     'status': 'success'
                 }, status=201)
