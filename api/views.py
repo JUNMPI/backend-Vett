@@ -764,7 +764,10 @@ class VacunaViewSet(viewsets.ModelViewSet):
             ).order_by('fecha_aplicacion')
             
             historial_count = historial_previo_query.count()
-            dosis_real_en_protocolo = historial_count + 1
+            
+            # 🔧 FIX: Usar dosis_numero enviado por frontend, NO calcularlo automáticamente
+            dosis_numero_frontend = data.get('dosis_numero', historial_count + 1)
+            dosis_real_en_protocolo = dosis_numero_frontend
             
             # 2. EDAD DE LA MASCOTA (CON FALLBACK SEGURO)
             from django.utils import timezone
