@@ -771,13 +771,22 @@ class VacunaViewSet(viewsets.ModelViewSet):
             # 🧠 LÓGICA 100% ROBUSTA - TODOS LOS CASOS EDGE CUBIERTOS
             fecha_aplicacion = date.fromisoformat(data['fecha_aplicacion'])
             
-            # Validar fecha no sea extremadamente futura (>10 años)
-            from datetime import timedelta
-            if fecha_aplicacion > date.today() + timedelta(days=3650):
+            # ⭐ NUEVA VALIDACIÓN: Fecha no puede ser futura
+            if fecha_aplicacion > date.today():
                 return Response({
                     'success': False,
-                    'message': f'Fecha muy lejana en el futuro: {fecha_aplicacion}. Máximo 10 años.',
-                    'error_code': 'DATE_TOO_FUTURE',
+                    'message': f'Fecha de aplicación no puede ser futura: {fecha_aplicacion}. Debe ser hoy o anterior.',
+                    'error_code': 'FUTURE_APPLICATION_DATE',
+                    'status': 'error'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Validar fecha no sea extremadamente antigua (>10 años atrás) 
+            from datetime import timedelta
+            if fecha_aplicacion < date.today() - timedelta(days=3650):
+                return Response({
+                    'success': False,
+                    'message': f'Fecha muy antigua: {fecha_aplicacion}. Máximo 10 años atrás.',
+                    'error_code': 'DATE_TOO_OLD',
                     'status': 'error'
                 }, status=status.HTTP_400_BAD_REQUEST)
             
@@ -820,14 +829,82 @@ class VacunaViewSet(viewsets.ModelViewSet):
                     'status': 'error'
                 }, status=status.HTTP_400_BAD_REQUEST)
             
-            # Validación contra protocolo de la vacuna
-            if dosis_numero_frontend > vacuna.dosis_total * 10:  # Máximo 10x el protocolo
+            # ⭐ NUEVA VALIDACIÓN ESTRICTA: Dosis no puede exceder protocolo configurado
+            # Para protocolo inicial (primeras dosis)
+            if dosis_numero_frontend > vacuna.dosis_total:
+                # Permitir solo si es un refuerzo anual (después de completar protocolo inicial)
+                if historial_count < vacuna.dosis_total:
+                    return Response({
+                        'success': False,
+                        'message': f'Dosis {dosis_numero_frontend} excede protocolo de {vacuna.nombre} ({vacuna.dosis_total} dosis máximo). Complete protocolo inicial primero.',
+                        'error_code': 'DOSE_EXCEEDS_PROTOCOL',
+                        'status': 'error'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                
+                # Si ya completó el protocolo, limitar refuerzos a máximo 20 dosis totales
+                if dosis_numero_frontend > 20:
+                    return Response({
+                        'success': False,
+                        'message': f'Dosis {dosis_numero_frontend} demasiado alta. Máximo 20 dosis incluyendo refuerzos.',
+                        'error_code': 'DOSE_LIMIT_EXCEEDED',
+                        'status': 'error'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # ⭐ NUEVA VALIDACIÓN ANTI-DUPLICADOS: Prevenir múltiples aplicaciones
+            # 1. No permitir misma vacuna el mismo día
+            aplicaciones_hoy = HistorialVacunacion.objects.filter(
+                mascota_id=data['mascota_id'],
+                vacuna=vacuna,
+                fecha_aplicacion=fecha_aplicacion,
+                estado__in=['aplicada', 'vigente', 'completado']
+            )
+            
+            if aplicaciones_hoy.exists():
                 return Response({
                     'success': False,
-                    'message': f'Dosis {dosis_numero_frontend} muy alta para vacuna {vacuna.nombre} (protocolo: {vacuna.dosis_total} dosis)',
-                    'error_code': 'DOSE_EXCEEDS_PROTOCOL',
+                    'message': f'Ya se aplicó {vacuna.nombre} a esta mascota el {fecha_aplicacion}. No se pueden aplicar múltiples dosis el mismo día.',
+                    'error_code': 'DUPLICATE_VACCINE_SAME_DAY',
                     'status': 'error'
                 }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # 2. Validar intervalo mínimo entre aplicaciones (7 días mínimo)
+            from datetime import timedelta
+            fecha_limite_reciente = fecha_aplicacion - timedelta(days=7)
+            aplicaciones_recientes = HistorialVacunacion.objects.filter(
+                mascota_id=data['mascota_id'],
+                vacuna=vacuna,
+                fecha_aplicacion__gte=fecha_limite_reciente,
+                fecha_aplicacion__lt=fecha_aplicacion,
+                estado__in=['aplicada', 'vigente', 'completado']
+            ).order_by('-fecha_aplicacion')
+            
+            if aplicaciones_recientes.exists():
+                ultima_aplicacion = aplicaciones_recientes.first()
+                dias_transcurridos = (fecha_aplicacion - ultima_aplicacion.fecha_aplicacion).days
+                return Response({
+                    'success': False,
+                    'message': f'{vacuna.nombre} fue aplicada hace {dias_transcurridos} días ({ultima_aplicacion.fecha_aplicacion}). Debe esperar al menos 7 días entre aplicaciones.',
+                    'error_code': 'VACCINE_TOO_SOON',
+                    'status': 'error'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # 3. Para vacunas de dosis única, validar que no tenga ya una aplicación vigente
+            if vacuna.dosis_total == 1:
+                aplicaciones_vigentes = HistorialVacunacion.objects.filter(
+                    mascota_id=data['mascota_id'],
+                    vacuna=vacuna,
+                    estado__in=['aplicada', 'vigente'],
+                    proxima_fecha__gte=fecha_aplicacion  # Aún vigente
+                ).exclude(fecha_aplicacion=fecha_aplicacion)
+                
+                if aplicaciones_vigentes.exists():
+                    aplicacion_vigente = aplicaciones_vigentes.first()
+                    return Response({
+                        'success': False,
+                        'message': f'{vacuna.nombre} ya está vigente para esta mascota (aplicada: {aplicacion_vigente.fecha_aplicacion}, válida hasta: {aplicacion_vigente.proxima_fecha}). No necesita refuerzo aún.',
+                        'error_code': 'VACCINE_STILL_VALID',
+                        'status': 'error'
+                    }, status=status.HTTP_400_BAD_REQUEST)
             
             dosis_real_en_protocolo = dosis_numero_frontend
             
