@@ -809,10 +809,26 @@ class VacunaViewSet(viewsets.ModelViewSet):
             
             historial_count = historial_previo_query.count()
             
-            # 🔧 FIX: Usar dosis_numero enviado por frontend, NO calcularlo automáticamente
-            dosis_numero_frontend = data.get('dosis_numero', historial_count + 1)
+            # 🔧 FIX: Usar dosis_numero enviado por frontend, con manejo robusto
+            dosis_numero_raw = data.get('dosis_numero')
             
-            # 🛡️ VALIDACIONES ROBUSTAS DE DOSIS_NUMERO
+            # 🛡️ MANEJO ROBUSTO DE DOSIS_NUMERO (para casos edge del frontend)
+            if dosis_numero_raw is None or dosis_numero_raw == '':
+                # Si no viene dosis_numero, calcular automáticamente
+                dosis_numero_frontend = historial_count + 1
+            else:
+                # Convertir a entero de forma segura
+                try:
+                    dosis_numero_frontend = int(dosis_numero_raw)
+                except (ValueError, TypeError):
+                    return Response({
+                        'success': False,
+                        'message': f'Número de dosis inválido: "{dosis_numero_raw}". Debe ser un número entero.',
+                        'error_code': 'INVALID_DOSE_FORMAT',
+                        'status': 'error'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Validar que sea positivo
             if dosis_numero_frontend <= 0:
                 return Response({
                     'success': False,
@@ -829,82 +845,36 @@ class VacunaViewSet(viewsets.ModelViewSet):
                     'status': 'error'
                 }, status=status.HTTP_400_BAD_REQUEST)
             
-            # ⭐ NUEVA VALIDACIÓN ESTRICTA: Dosis no puede exceder protocolo configurado
-            # Para protocolo inicial (primeras dosis)
-            if dosis_numero_frontend > vacuna.dosis_total:
-                # Permitir solo si es un refuerzo anual (después de completar protocolo inicial)
-                if historial_count < vacuna.dosis_total:
-                    return Response({
-                        'success': False,
-                        'message': f'Dosis {dosis_numero_frontend} excede protocolo de {vacuna.nombre} ({vacuna.dosis_total} dosis máximo). Complete protocolo inicial primero.',
-                        'error_code': 'DOSE_EXCEEDS_PROTOCOL',
-                        'status': 'error'
-                    }, status=status.HTTP_400_BAD_REQUEST)
-                
-                # Si ya completó el protocolo, limitar refuerzos a máximo 20 dosis totales
-                if dosis_numero_frontend > 20:
-                    return Response({
-                        'success': False,
-                        'message': f'Dosis {dosis_numero_frontend} demasiado alta. Máximo 20 dosis incluyendo refuerzos.',
-                        'error_code': 'DOSE_LIMIT_EXCEEDED',
-                        'status': 'error'
-                    }, status=status.HTTP_400_BAD_REQUEST)
+            # ⭐ VALIDACIÓN DE PROTOCOLO RELAJADA: Solo advertir en casos extremos
+            # Validar solo casos muy extremos (más de 10 dosis)
+            if dosis_numero_frontend > 10:
+                return Response({
+                    'success': False,
+                    'message': f'Dosis {dosis_numero_frontend} muy alta. Se requiere revisión veterinaria.',
+                    'error_code': 'DOSE_REQUIRES_REVIEW',
+                    'status': 'error'
+                }, status=status.HTTP_400_BAD_REQUEST)
             
-            # ⭐ NUEVA VALIDACIÓN ANTI-DUPLICADOS: Prevenir múltiples aplicaciones
-            # 1. No permitir misma vacuna el mismo día
-            aplicaciones_hoy = HistorialVacunacion.objects.filter(
+            # ⭐ VALIDACIÓN ANTI-DUPLICADOS INTELIGENTE: Solo prevenir duplicados exactos
+            # 1. No permitir misma vacuna, mismo día, MISMA DOSIS (duplicado real)
+            aplicaciones_duplicadas = HistorialVacunacion.objects.filter(
                 mascota_id=data['mascota_id'],
                 vacuna=vacuna,
                 fecha_aplicacion=fecha_aplicacion,
+                dosis_numero=dosis_numero_frontend,  # Misma dosis = duplicado real
                 estado__in=['aplicada', 'vigente', 'completado']
             )
             
-            if aplicaciones_hoy.exists():
+            if aplicaciones_duplicadas.exists():
                 return Response({
                     'success': False,
-                    'message': f'Ya se aplicó {vacuna.nombre} a esta mascota el {fecha_aplicacion}. No se pueden aplicar múltiples dosis el mismo día.',
-                    'error_code': 'DUPLICATE_VACCINE_SAME_DAY',
+                    'message': f'Ya se aplicó dosis {dosis_numero_frontend} de {vacuna.nombre} a esta mascota el {fecha_aplicacion}. No se puede aplicar la misma dosis dos veces el mismo día.',
+                    'error_code': 'DUPLICATE_EXACT_DOSE',
                     'status': 'error'
                 }, status=status.HTTP_400_BAD_REQUEST)
             
-            # 2. Validar intervalo mínimo entre aplicaciones (7 días mínimo)
-            from datetime import timedelta
-            fecha_limite_reciente = fecha_aplicacion - timedelta(days=7)
-            aplicaciones_recientes = HistorialVacunacion.objects.filter(
-                mascota_id=data['mascota_id'],
-                vacuna=vacuna,
-                fecha_aplicacion__gte=fecha_limite_reciente,
-                fecha_aplicacion__lt=fecha_aplicacion,
-                estado__in=['aplicada', 'vigente', 'completado']
-            ).order_by('-fecha_aplicacion')
-            
-            if aplicaciones_recientes.exists():
-                ultima_aplicacion = aplicaciones_recientes.first()
-                dias_transcurridos = (fecha_aplicacion - ultima_aplicacion.fecha_aplicacion).days
-                return Response({
-                    'success': False,
-                    'message': f'{vacuna.nombre} fue aplicada hace {dias_transcurridos} días ({ultima_aplicacion.fecha_aplicacion}). Debe esperar al menos 7 días entre aplicaciones.',
-                    'error_code': 'VACCINE_TOO_SOON',
-                    'status': 'error'
-                }, status=status.HTTP_400_BAD_REQUEST)
-            
-            # 3. Para vacunas de dosis única, validar que no tenga ya una aplicación vigente
-            if vacuna.dosis_total == 1:
-                aplicaciones_vigentes = HistorialVacunacion.objects.filter(
-                    mascota_id=data['mascota_id'],
-                    vacuna=vacuna,
-                    estado__in=['aplicada', 'vigente'],
-                    proxima_fecha__gte=fecha_aplicacion  # Aún vigente
-                ).exclude(fecha_aplicacion=fecha_aplicacion)
-                
-                if aplicaciones_vigentes.exists():
-                    aplicacion_vigente = aplicaciones_vigentes.first()
-                    return Response({
-                        'success': False,
-                        'message': f'{vacuna.nombre} ya está vigente para esta mascota (aplicada: {aplicacion_vigente.fecha_aplicacion}, válida hasta: {aplicacion_vigente.proxima_fecha}). No necesita refuerzo aún.',
-                        'error_code': 'VACCINE_STILL_VALID',
-                        'status': 'error'
-                    }, status=status.HTTP_400_BAD_REQUEST)
+            # 2. Solo validar duplicados exactos en fechas muy cercanas (mismo día con misma dosis ya validado arriba)
+            # No validar intervalos - permitir flexibilidad total para uso normal
             
             dosis_real_en_protocolo = dosis_numero_frontend
             
