@@ -170,6 +170,7 @@ class Mascota(models.Model):
 
     class Meta:
         ordering = ['nombreMascota']
+        unique_together = ('nombreMascota', 'responsable')
 
     def __str__(self):
         return self.nombreMascota
