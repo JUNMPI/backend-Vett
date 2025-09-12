@@ -1,4 +1,4 @@
-from rest_framework import viewsets
+from rest_framework import viewsets, status
 from .models import *
 from .serializers import *
 from rest_framework.decorators import action, api_view
@@ -8,7 +8,7 @@ from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny
 
 from django.shortcuts import get_object_or_404
-from rest_framework import status
+
 # ViewSet for Especialidad
 class EspecialidadViewSet(viewsets.ModelViewSet):
     # Definimos el queryset de manera explícita aquí
@@ -743,8 +743,43 @@ class VacunaViewSet(viewsets.ModelViewSet):
             vacuna = self.get_object()  # Obtener vacuna por ID de la URL
             data = request.data
             
+            # 🛡️ VALIDACIONES DE ENTRADA ROBUSTAS
+            # Validar campos requeridos
+            campos_requeridos = ['mascota_id', 'fecha_aplicacion', 'veterinario_id']
+            for campo in campos_requeridos:
+                if campo not in data or not data[campo]:
+                    return Response({
+                        'success': False,
+                        'message': f'Campo requerido faltante: {campo}',
+                        'error_code': 'MISSING_REQUIRED_FIELD',
+                        'status': 'error'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Validar que IDs sean válidos UUIDs
+            import uuid
+            try:
+                uuid.UUID(str(data['mascota_id']))
+                uuid.UUID(str(data['veterinario_id']))
+            except ValueError:
+                return Response({
+                    'success': False,
+                    'message': 'IDs inválidos (deben ser UUIDs válidos)',
+                    'error_code': 'INVALID_UUID_FORMAT',
+                    'status': 'error'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
             # 🧠 LÓGICA 100% ROBUSTA - TODOS LOS CASOS EDGE CUBIERTOS
             fecha_aplicacion = date.fromisoformat(data['fecha_aplicacion'])
+            
+            # Validar fecha no sea extremadamente futura (>10 años)
+            from datetime import timedelta
+            if fecha_aplicacion > date.today() + timedelta(days=3650):
+                return Response({
+                    'success': False,
+                    'message': f'Fecha muy lejana en el futuro: {fecha_aplicacion}. Máximo 10 años.',
+                    'error_code': 'DATE_TOO_FUTURE',
+                    'status': 'error'
+                }, status=status.HTTP_400_BAD_REQUEST)
             
             # 🔒 VALIDACIONES CRÍTICAS PREVIAS
             if vacuna.dosis_total <= 0:
@@ -767,6 +802,33 @@ class VacunaViewSet(viewsets.ModelViewSet):
             
             # 🔧 FIX: Usar dosis_numero enviado por frontend, NO calcularlo automáticamente
             dosis_numero_frontend = data.get('dosis_numero', historial_count + 1)
+            
+            # 🛡️ VALIDACIONES ROBUSTAS DE DOSIS_NUMERO
+            if dosis_numero_frontend <= 0:
+                return Response({
+                    'success': False,
+                    'message': f'Número de dosis inválido: {dosis_numero_frontend}. Debe ser mayor a 0.',
+                    'error_code': 'INVALID_DOSE_NUMBER',
+                    'status': 'error'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            if dosis_numero_frontend > 50:  # Límite médicamente razonable
+                return Response({
+                    'success': False,
+                    'message': f'Número de dosis excesivo: {dosis_numero_frontend}. Máximo permitido: 50.',
+                    'error_code': 'DOSE_NUMBER_EXCEEDED',
+                    'status': 'error'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Validación contra protocolo de la vacuna
+            if dosis_numero_frontend > vacuna.dosis_total * 10:  # Máximo 10x el protocolo
+                return Response({
+                    'success': False,
+                    'message': f'Dosis {dosis_numero_frontend} muy alta para vacuna {vacuna.nombre} (protocolo: {vacuna.dosis_total} dosis)',
+                    'error_code': 'DOSE_EXCEEDS_PROTOCOL',
+                    'status': 'error'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
             dosis_real_en_protocolo = dosis_numero_frontend
             
             # 2. EDAD DE LA MASCOTA (CON FALLBACK SEGURO)
@@ -955,12 +1017,40 @@ class VacunaViewSet(viewsets.ModelViewSet):
                 'status': 'success'
             }, status=201)
             
-        except Exception as e:
+        except ValueError as e:
+            # Errores de validación específicos (fechas, datos inválidos)
             return Response({
                 'success': False,
-                'message': f'Error al aplicar vacuna: {str(e)}',
+                'message': f'Datos inválidos: {str(e)}',
+                'error_code': 'VALIDATION_ERROR',
                 'status': 'error'
-            }, status=400)
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        except Mascota.DoesNotExist:
+            return Response({
+                'success': False,
+                'message': 'Mascota no encontrada',
+                'error_code': 'MASCOTA_NOT_FOUND',
+                'status': 'error'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        except Veterinario.DoesNotExist:
+            return Response({
+                'success': False,
+                'message': 'Veterinario no encontrado',
+                'error_code': 'VETERINARIO_NOT_FOUND', 
+                'status': 'error'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        except Exception as e:
+            # Log del error para debugging (en producción usar logging)
+            print(f"ERROR INESPERADO en aplicar vacuna: {str(e)}")
+            return Response({
+                'success': False,
+                'message': 'Error interno del servidor',
+                'error_code': 'INTERNAL_SERVER_ERROR',
+                'status': 'error'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class HistorialVacunacionViewSet(viewsets.ModelViewSet):
