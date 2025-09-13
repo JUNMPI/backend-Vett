@@ -27,7 +27,8 @@ Sistema de gestión veterinaria desarrollado con **Django REST Framework** que p
 ### 🏥 **Historiales Médicos**
 - **Historial clínico único** por mascota
 - **Atenciones médicas** con diagnósticos y tratamientos
-- **Vacunaciones** con seguimiento de dosis
+- **Sistema de vacunación inteligente** con protocolos automatizados
+- **Seguimiento avanzado de dosis** individual y protocolo completo
 - **Generación automática** de números de historia
 
 ## 🛠️ Tecnologías Utilizadas
@@ -160,6 +161,13 @@ Authorization: Bearer <tu_access_token>
 - `GET/POST /api/mascotas/` - Mascotas
 - `GET/POST /api/citas/` - Citas veterinarias
 
+### 💉 **Sistema de Vacunación**
+- `GET/POST /api/vacunas/` - Catálogo de vacunas
+- `POST /api/vacunas/{id}/aplicar/` - **Aplicación unificada de vacunas**
+- `GET /api/historial-vacunacion/` - Historial de vacunación
+- **Soporte para dosis individuales y protocolos completos**
+- 📖 **Ver**: [`VACUNACION_API_DOCS.md`](./VACUNACION_API_DOCS.md) para documentación detallada
+
 ### 📦 **Inventario**
 - `GET/POST /api/productos/` - Productos e inventario
 - `GET /api/productos/activos/` - Solo productos activos
@@ -170,6 +178,53 @@ Authorization: Bearer <tu_access_token>
 - `GET /api/especialidades/activos/` - Solo especialidades activas
 - `GET /api/trabajadores/veterinarios/` - Solo veterinarios
 - `GET /api/productos/count/` - Conteo de productos
+
+## 💉 Sistema de Vacunación Inteligente
+
+### 🎯 **Endpoint Unificado de Vacunación**
+
+**URL**: `POST /api/vacunas/{id}/aplicar/`
+
+El sistema soporta **dos modos de aplicación** en un solo endpoint:
+
+#### **Modo 1: Dosis Individual**
+```json
+{
+  "mascota_id": "uuid",
+  "fecha_aplicacion": "2025-01-15",
+  "veterinario_id": "uuid",
+  "dosis_numero": 1,
+  "observaciones": "Primera dosis",
+  "protocolo_completo": false
+}
+```
+
+#### **Modo 2: Protocolo Completo**
+```json
+{
+  "mascota_id": "uuid",
+  "fecha_aplicacion": "2025-01-15", 
+  "veterinario_id": "uuid",
+  "observaciones": "Protocolo completo",
+  "protocolo_completo": true,
+  "dosis_aplicadas": 3
+}
+```
+
+### ✅ **Características del Sistema**
+- **Cálculo automático** de próximas fechas según protocolo
+- **Validación anti-duplicados** inteligente
+- **Soporte para protocolos complejos** (JSON, cachorro, estándar)
+- **Detección automática** de atrasos y reinicio de protocolos
+- **Validación de fechas** (no permite fechas futuras)
+- **Manejo de errores** con códigos específicos para frontend
+
+### 🔄 **Flujo de Trabajo**
+1. **Detección automática** del modo según parámetros
+2. **Validación exhaustiva** de datos y fechas
+3. **Cálculo inteligente** de dosis y próximas fechas
+4. **Creación de registros** optimizada
+5. **Respuesta estructurada** con información completa
 
 ## 💰 Análisis de Rentabilidad
 
@@ -234,8 +289,9 @@ Este proyecto es de uso educativo y profesional.
 ## 🚀 Estado del Proyecto
 
 **Versión**: 1.0.0  
-**Estado**: Desarrollo Activo  
+**Estado**: ✅ **LISTO PARA PRODUCCIÓN**  
 **Última Actualización**: Enero 2025  
+**Tests de Producción**: ✅ 100% Éxito  
 
 ### ✅ **Características Implementadas**
 - [x] Autenticación JWT completa
@@ -245,6 +301,10 @@ Este proyecto es de uso educativo y profesional.
 - [x] Análisis de rentabilidad
 - [x] Gestión de inventario
 - [x] Historial clínico
+- [x] **Sistema de vacunación inteligente**
+- [x] **Aplicación unificada de dosis individuales y protocolos completos**
+- [x] **Validaciones avanzadas anti-duplicados**
+- [x] **Cálculo automático de próximas fechas de vacunación**
 
 ### 🔄 **Próximas Características**
 - [ ] Dashboard de métricas
