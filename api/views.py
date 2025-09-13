@@ -721,6 +721,115 @@ class VacunaViewSet(viewsets.ModelViewSet):
             'status': 'success'
         })
     
+    @action(detail=True, methods=['post'], url_path='aplicar-protocolo-completo')
+    def aplicar_protocolo_completo(self, request, pk=None):
+        """
+        🎯 NUEVO ENDPOINT: Aplicar protocolo completo de vacuna en una sola operación
+        URL: POST /api/vacunas/{id}/aplicar-protocolo-completo/
+        Body: {
+            "mascota_id": "uuid",
+            "fecha_aplicacion": "2025-01-15",
+            "veterinario_id": "uuid",
+            "observaciones": "Protocolo completo aplicado",
+            "lote": "ABC123",
+            "dosis_aplicadas": 2  // Opcional: especificar cuántas dosis se aplicaron
+        }
+        """
+        try:
+            vacuna = self.get_object()
+            data = request.data
+            
+            # Validaciones básicas
+            campos_requeridos = ['mascota_id', 'fecha_aplicacion', 'veterinario_id']
+            for campo in campos_requeridos:
+                if campo not in data or not data[campo]:
+                    return Response({
+                        'success': False,
+                        'message': f'Campo requerido faltante: {campo}',
+                        'error_code': 'MISSING_REQUIRED_FIELD',
+                        'status': 'error'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            
+            from datetime import date as date_class
+            fecha_aplicacion = date_class.fromisoformat(data['fecha_aplicacion'])
+            
+            # Validar fecha no futura
+            if fecha_aplicacion > date_class.today():
+                return Response({
+                    'success': False,
+                    'message': f'Fecha de aplicación no puede ser futura: {fecha_aplicacion}',
+                    'error_code': 'FUTURE_APPLICATION_DATE',
+                    'status': 'error'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Determinar cuántas dosis se aplicaron
+            dosis_aplicadas = data.get('dosis_aplicadas', vacuna.dosis_total)
+            
+            # Validar que no exceda el protocolo
+            if dosis_aplicadas > vacuna.dosis_total:
+                dosis_aplicadas = vacuna.dosis_total
+            
+            # Obtener veterinario
+            try:
+                veterinario = Veterinario.objects.get(id=data['veterinario_id'])
+            except Veterinario.DoesNotExist:
+                return Response({
+                    'success': False,
+                    'message': f'Veterinario no encontrado: {data["veterinario_id"]}',
+                    'error_code': 'VETERINARIAN_NOT_FOUND',
+                    'status': 'error'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Crear un solo registro que represente el protocolo completo
+            from datetime import timedelta
+            from dateutil.relativedelta import relativedelta
+            
+            observaciones_protocolo = data.get('observaciones', '') + f' (Protocolo completo: {dosis_aplicadas} dosis aplicadas)'
+            
+            # Calcular próxima fecha (refuerzo anual)
+            proxima_fecha = fecha_aplicacion + relativedelta(months=vacuna.frecuencia_meses)
+            
+            # Crear registro único
+            historial_record = HistorialVacunacion.objects.create(
+                mascota_id=data['mascota_id'],
+                vacuna=vacuna,
+                fecha_aplicacion=fecha_aplicacion,
+                proxima_fecha=proxima_fecha,
+                veterinario=veterinario,
+                lote=data.get('lote', ''),
+                laboratorio=data.get('laboratorio', ''),
+                dosis_numero=dosis_aplicadas,  # Número total de dosis aplicadas
+                observaciones=observaciones_protocolo,
+                estado='vigente'
+            )
+            
+            return Response({
+                'success': True,
+                'message': f'Protocolo completo de {vacuna.nombre} aplicado correctamente',
+                'data': {
+                    'historial_id': str(historial_record.id),
+                    'dosis_aplicadas': dosis_aplicadas,
+                    'protocolo_completo': True,
+                    'proxima_fecha': proxima_fecha.isoformat(),
+                    'mensaje_usuario': f'Protocolo completo aplicado ({dosis_aplicadas} dosis). Próximo refuerzo en {vacuna.frecuencia_meses} meses',
+                    'protocolo_info': {
+                        'dosis_aplicadas': dosis_aplicadas,
+                        'dosis_total_protocolo': vacuna.dosis_total,
+                        'es_protocolo_completo': True,
+                        'proxima_accion': 'refuerzo_anual'
+                    }
+                },
+                'status': 'success'
+            })
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'message': f'Error aplicando protocolo completo: {str(e)}',
+                'error_code': 'PROTOCOL_APPLICATION_ERROR',
+                'status': 'error'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
     @action(detail=True, methods=['post'], url_path='aplicar')
     def aplicar(self, request, pk=None):
         """
@@ -729,16 +838,14 @@ class VacunaViewSet(viewsets.ModelViewSet):
         Body: {
             "mascota_id": "uuid",
             "fecha_aplicacion": "2025-01-15",
-            "dosis_numero": 1,
+            "dosis_numero": 1,                    // Opcional: número de dosis específica
             "veterinario_id": "uuid",
             "observaciones": "",
-            "lote": "ABC123"
+            "lote": "ABC123",
+            "protocolo_completo": false,          // NUEVO: true = protocolo completo en una sola aplicación
+            "dosis_aplicadas": 2                  // NUEVO: cuántas dosis del protocolo se aplicaron
         }
         """
-        from datetime import date
-        from dateutil.relativedelta import relativedelta
-        from datetime import timedelta
-        
         try:
             vacuna = self.get_object()  # Obtener vacuna por ID de la URL
             data = request.data
@@ -785,7 +892,115 @@ class VacunaViewSet(viewsets.ModelViewSet):
                     'status': 'error'
                 }, status=status.HTTP_400_BAD_REQUEST)
             
-            # 🧠 LÓGICA 100% ROBUSTA - TODOS LOS CASOS EDGE CUBIERTOS
+            # ⭐ NUEVA LÓGICA: Detectar si es protocolo completo o dosis individual
+            es_protocolo_completo = data.get('protocolo_completo', False)
+            
+            if es_protocolo_completo:
+                # 🎯 MODO PROTOCOLO COMPLETO
+                return self._aplicar_protocolo_completo_integrado(vacuna, data)
+            else:
+                # 🎯 MODO DOSIS INDIVIDUAL (lógica existente)
+                return self._aplicar_dosis_individual(vacuna, data)
+        
+        except Exception as e:
+            return Response({
+                'success': False,
+                'message': f'Error aplicando vacuna: {str(e)}',
+                'error_code': 'APPLICATION_ERROR',
+                'status': 'error'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    def _aplicar_protocolo_completo_integrado(self, vacuna, data):
+        """Aplicar protocolo completo dentro del endpoint principal"""
+        try:
+            from datetime import date as date_class
+            from dateutil.relativedelta import relativedelta
+            
+            fecha_aplicacion = date_class.fromisoformat(data['fecha_aplicacion'])
+            
+            # Validar fecha no futura
+            if fecha_aplicacion > date_class.today():
+                return Response({
+                    'success': False,
+                    'message': f'Fecha de aplicación no puede ser futura: {fecha_aplicacion}',
+                    'error_code': 'FUTURE_APPLICATION_DATE',
+                    'status': 'error'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Determinar cuántas dosis se aplicaron
+            dosis_aplicadas = data.get('dosis_aplicadas', vacuna.dosis_total)
+            
+            # Validar que no exceda el protocolo
+            if dosis_aplicadas > vacuna.dosis_total:
+                dosis_aplicadas = vacuna.dosis_total
+            
+            # Obtener veterinario
+            try:
+                veterinario = Veterinario.objects.get(id=data['veterinario_id'])
+            except Veterinario.DoesNotExist:
+                return Response({
+                    'success': False,
+                    'message': f'Veterinario no encontrado: {data["veterinario_id"]}',
+                    'error_code': 'VETERINARIAN_NOT_FOUND',
+                    'status': 'error'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Crear observaciones específicas para protocolo completo
+            observaciones_base = data.get('observaciones', '')
+            observaciones_protocolo = f'{observaciones_base} (Protocolo completo: {dosis_aplicadas} dosis aplicadas)'.strip()
+            
+            # Calcular próxima fecha (refuerzo anual)
+            proxima_fecha = fecha_aplicacion + relativedelta(months=vacuna.frecuencia_meses)
+            
+            # Crear registro único que representa el protocolo completo
+            historial_record = HistorialVacunacion.objects.create(
+                mascota_id=data['mascota_id'],
+                vacuna=vacuna,
+                fecha_aplicacion=fecha_aplicacion,
+                proxima_fecha=proxima_fecha,
+                veterinario=veterinario,
+                lote=data.get('lote', ''),
+                laboratorio=data.get('laboratorio', ''),
+                dosis_numero=dosis_aplicadas,  # Número total de dosis aplicadas
+                observaciones=observaciones_protocolo,
+                estado='vigente'
+            )
+            
+            return Response({
+                'success': True,
+                'message': f'Protocolo completo de {vacuna.nombre} aplicado correctamente',
+                'data': {
+                    'historial_id': str(historial_record.id),
+                    'dosis_aplicadas': dosis_aplicadas,
+                    'protocolo_completo': True,
+                    'proxima_fecha': proxima_fecha.isoformat(),
+                    'mensaje_usuario': f'Protocolo completo aplicado ({dosis_aplicadas} dosis). Próximo refuerzo en {vacuna.frecuencia_meses} meses',
+                    'protocolo_info': {
+                        'dosis_aplicadas': dosis_aplicadas,
+                        'dosis_total_protocolo': vacuna.dosis_total,
+                        'es_protocolo_completo': True,
+                        'proxima_accion': 'refuerzo_anual'
+                    }
+                },
+                'status': 'success'
+            })
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'message': f'Error aplicando protocolo completo: {str(e)}',
+                'error_code': 'PROTOCOL_APPLICATION_ERROR',
+                'status': 'error'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    def _aplicar_dosis_individual(self, vacuna, data):
+        """Aplicar dosis individual (lógica existente)"""
+        try:
+            from datetime import date
+            from dateutil.relativedelta import relativedelta
+            from datetime import timedelta
+            
+            # 🧠 LÓGICA EXISTENTE PARA DOSIS INDIVIDUALES
             fecha_aplicacion = date.fromisoformat(data['fecha_aplicacion'])
             
             # ⭐ NUEVA VALIDACIÓN: Fecha no puede ser futura
