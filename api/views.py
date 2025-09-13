@@ -743,6 +743,23 @@ class VacunaViewSet(viewsets.ModelViewSet):
             vacuna = self.get_object()  # Obtener vacuna por ID de la URL
             data = request.data
             
+            # 🔍 DEBUG: Validar que la vacuna existe y tiene datos correctos
+            if not vacuna:
+                return Response({
+                    'success': False,
+                    'message': f'Vacuna no encontrada con ID: {pk}',
+                    'error_code': 'VACCINE_NOT_FOUND',
+                    'status': 'error'
+                }, status=status.HTTP_404_NOT_FOUND)
+                
+            if not hasattr(vacuna, 'nombre') or not vacuna.nombre:
+                return Response({
+                    'success': False,
+                    'message': f'Vacuna con ID {pk} no tiene nombre válido',
+                    'error_code': 'INVALID_VACCINE_DATA',
+                    'status': 'error'
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
             # 🛡️ VALIDACIONES DE ENTRADA ROBUSTAS
             # Validar campos requeridos
             campos_requeridos = ['mascota_id', 'fecha_aplicacion', 'veterinario_id']
