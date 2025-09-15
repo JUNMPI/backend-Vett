@@ -849,7 +849,7 @@ class VacunaViewSet(viewsets.ModelViewSet):
         try:
             vacuna = self.get_object()  # Obtener vacuna por ID de la URL
             data = request.data
-            
+
             # 🔍 DEBUG: Validar que la vacuna existe y tiene datos correctos
             if not vacuna:
                 return Response({
@@ -902,13 +902,13 @@ class VacunaViewSet(viewsets.ModelViewSet):
                 # 🎯 MODO DOSIS INDIVIDUAL (lógica existente)
                 return self._aplicar_dosis_individual(vacuna, data)
         
-        except Exception as e:
-            return Response({
-                'success': False,
-                'message': f'Error aplicando vacuna: {str(e)}',
-                'error_code': 'APPLICATION_ERROR',
-                'status': 'error'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            except Exception as e:
+                return Response({
+                    'success': False,
+                    'message': f'Error aplicando vacuna: {str(e)}',
+                    'error_code': 'APPLICATION_ERROR',
+                    'status': 'error'
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     def _aplicar_protocolo_completo_integrado(self, vacuna, data):
         """Aplicar protocolo completo dentro del endpoint principal"""
@@ -1087,23 +1087,58 @@ class VacunaViewSet(viewsets.ModelViewSet):
                     'status': 'error'
                 }, status=status.HTTP_400_BAD_REQUEST)
             
-            # ⭐ VALIDACIÓN ANTI-DUPLICADOS INTELIGENTE: Solo prevenir duplicados exactos
-            # 1. No permitir misma vacuna, mismo día, MISMA DOSIS (duplicado real)
-            aplicaciones_duplicadas = HistorialVacunacion.objects.filter(
+            # 🛡️ VALIDACIÓN ANTI-DUPLICADOS ROBUSTA: Prevenir race conditions y duplicados
+            from datetime import datetime, timedelta
+
+            # 1. VALIDACIÓN CRÍTICA: Duplicados en timeframe de 5 minutos (race condition)
+            timeframe_critico = datetime.now() - timedelta(minutes=5)
+
+            duplicados_recientes = HistorialVacunacion.objects.select_for_update().filter(
                 mascota_id=data['mascota_id'],
                 vacuna=vacuna,
                 fecha_aplicacion=fecha_aplicacion,
-                dosis_numero=dosis_numero_frontend,  # Misma dosis = duplicado real
+                dosis_numero=dosis_numero_frontend,
+                creado__gte=timeframe_critico,
                 estado__in=['aplicada', 'vigente', 'completado']
             )
-            
-            if aplicaciones_duplicadas.exists():
+
+            if duplicados_recientes.exists():
+                # Log del intento duplicado para auditoría
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"🚨 Duplicado detectado: Mascota {data['mascota_id']}, Vacuna {vacuna.id}, Fecha {fecha_aplicacion}, Dosis {dosis_numero_frontend}")
+
                 return Response({
                     'success': False,
-                    'message': f'Ya se aplicó dosis {dosis_numero_frontend} de {vacuna.nombre} a esta mascota el {fecha_aplicacion}. No se puede aplicar la misma dosis dos veces el mismo día.',
-                    'error_code': 'DUPLICATE_EXACT_DOSE',
+                    'message': f'❌ Duplicado detectado: Ya se aplicó dosis {dosis_numero_frontend} de {vacuna.nombre} a esta mascota el {fecha_aplicacion} en los últimos 5 minutos.',
+                    'error_code': 'RECENT_DUPLICATE_DETECTED',
+                    'debug_info': {
+                        'duplicados_encontrados': duplicados_recientes.count(),
+                        'timeframe_verificado': '5 minutos',
+                        'registros_duplicados': [str(reg.id) for reg in duplicados_recientes]
+                    },
                     'status': 'error'
-                }, status=status.HTTP_400_BAD_REQUEST)
+                }, status=status.HTTP_409_CONFLICT)
+
+            # 2. VALIDACIÓN DIARIA: No permitir más dosis del protocolo completo en un día
+            aplicaciones_mismo_dia = HistorialVacunacion.objects.filter(
+                mascota_id=data['mascota_id'],
+                vacuna=vacuna,
+                fecha_aplicacion=fecha_aplicacion,
+                estado__in=['aplicada', 'vigente', 'completado']
+            ).count()
+
+            if aplicaciones_mismo_dia >= vacuna.dosis_total:
+                return Response({
+                    'success': False,
+                    'message': f'❌ Protocolo ya completado: {vacuna.nombre} para esta mascota el {fecha_aplicacion}. Protocolo: {vacuna.dosis_total} dosis máximo.',
+                    'error_code': 'PROTOCOL_COMPLETED_SAME_DAY',
+                    'debug_info': {
+                        'aplicaciones_encontradas': aplicaciones_mismo_dia,
+                        'protocolo_dosis_total': vacuna.dosis_total
+                    },
+                    'status': 'error'
+                }, status=status.HTTP_409_CONFLICT)
             
             # 2. Solo validar duplicados exactos en fechas muy cercanas (mismo día con misma dosis ya validado arriba)
             # No validar intervalos - permitir flexibilidad total para uso normal
