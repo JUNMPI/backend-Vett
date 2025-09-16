@@ -65,10 +65,10 @@ def create_default_external_veterinarian(apps, schema_editor):
             especialidad=especialidad
         )
         
-        print("✅ Veterinario externo creado por defecto")
+        print("OK: Veterinario externo creado por defecto")
         
     except Exception as e:
-        print(f"⚠️ Error creando veterinario externo: {e}")
+        print(f"ERROR: Error creando veterinario externo: {e}")
 
 
 def reverse_create_default_external_veterinarian(apps, schema_editor):

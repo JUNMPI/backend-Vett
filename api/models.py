@@ -1,10 +1,13 @@
 from django.db import models
 from django.forms import ValidationError
+from django.core.exceptions import ValidationError as CoreValidationError
+from django.core.validators import RegexValidator
 from .choices import *
 from django.contrib.auth.models import AbstractUser
 import uuid
 from django.conf import settings
 import secrets
+import re
 
 # Crear el modelo de Especialidad
 class Especialidad(models.Model):
@@ -142,6 +145,46 @@ class Responsable(models.Model):
     def __str__(self):
         return f"{self.nombres} {self.apellidos}"
 
+# Validador de seguridad para nombres
+def validate_safe_name(value):
+    """
+    Validador que previene SQL injection, XSS y otros ataques
+    """
+    if not value or not value.strip():
+        raise CoreValidationError('El nombre no puede estar vacío.')
+
+    # Longitud máxima
+    if len(value) > 50:
+        raise CoreValidationError('El nombre no puede exceder 50 caracteres.')
+
+    # Patrones maliciosos
+    malicious_patterns = [
+        r'<script.*?>',  # XSS
+        r'javascript:',  # XSS
+        r'drop\s+table',  # SQL Injection
+        r'delete\s+from',  # SQL Injection
+        r'insert\s+into',  # SQL Injection
+        r'update\s+set',  # SQL Injection
+        r'union\s+select',  # SQL Injection
+        r'--',  # SQL Comment
+        r';.*drop',  # SQL Chain
+        r'<.*>',  # HTML Tags
+        r'eval\s*\(',  # Code injection
+        r'exec\s*\(',  # Code injection
+    ]
+
+    value_lower = value.lower()
+    for pattern in malicious_patterns:
+        if re.search(pattern, value_lower, re.IGNORECASE):
+            raise CoreValidationError(f'El nombre contiene contenido no permitido: {pattern}')
+
+    # Solo permitir caracteres seguros
+    safe_pattern = r'^[a-zA-Z0-9\s\-_.áéíóúÁÉÍÓÚñÑ]+$'
+    if not re.match(safe_pattern, value):
+        raise CoreValidationError('El nombre solo puede contener letras, números, espacios y caracteres básicos (-._)')
+
+    return value
+
 class Mascota(models.Model):
     GENERO_CHOICES = [
         ('Hembra', 'Hembra'),
@@ -149,13 +192,13 @@ class Mascota(models.Model):
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    nombreMascota = models.CharField(max_length=100)
-    especie = models.CharField(max_length=100)
-    raza = models.CharField(max_length=100)
+    nombreMascota = models.CharField(max_length=50, validators=[validate_safe_name])
+    especie = models.CharField(max_length=100, validators=[validate_safe_name])
+    raza = models.CharField(max_length=100, validators=[validate_safe_name])
     fechaNacimiento = models.DateField()
     genero = models.CharField(max_length=10, choices=GENERO_CHOICES)
     peso = models.DecimalField(max_digits=5, decimal_places=2)
-    color = models.CharField(max_length=50)
+    color = models.CharField(max_length=50, validators=[validate_safe_name])
     observaciones = models.TextField(blank=True, null=True)
     estado = models.CharField(
         max_length=10,
@@ -171,6 +214,32 @@ class Mascota(models.Model):
     class Meta:
         ordering = ['nombreMascota']
         unique_together = ('nombreMascota', 'responsable')
+
+    def clean(self):
+        super().clean()
+
+        # Validar fecha de nacimiento
+        from datetime import date
+        if self.fechaNacimiento:
+            if self.fechaNacimiento > date.today():
+                raise CoreValidationError({'fechaNacimiento': 'La fecha de nacimiento no puede ser futura.'})
+
+            # No permitir fechas muy antiguas (más de 50 años)
+            from datetime import timedelta
+            fecha_limite = date.today() - timedelta(days=50*365)
+            if self.fechaNacimiento < fecha_limite:
+                raise CoreValidationError({'fechaNacimiento': 'La fecha de nacimiento es demasiado antigua.'})
+
+        # Validar peso
+        if self.peso is not None:
+            if self.peso <= 0:
+                raise CoreValidationError({'peso': 'El peso debe ser mayor a 0.'})
+            if self.peso > 500:  # Peso máximo razonable
+                raise CoreValidationError({'peso': 'El peso ingresado parece excesivo.'})
+
+    def save(self, *args, **kwargs):
+        self.full_clean()  # Ejecutar validaciones antes de guardar
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return self.nombreMascota

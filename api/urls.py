@@ -15,7 +15,7 @@ router.register(r'trabajadores', TrabajadorViewSet)
 router.register(r'veterinarios', VeterinarioViewSet)
 router.register(r'servicios', ServicioViewSet)
 router.register(r'citas', CitaViewSet)
-# 🐾 URLs del sistema de vacunación
+# URLs del sistema de vacunación
 router.register(r'vacunas', VacunaViewSet)
 router.register(r'historial-vacunacion', HistorialVacunacionViewSet)
 router.register(r'historial-medico', HistorialMedicoViewSet)
@@ -24,8 +24,9 @@ urlpatterns = router.urls + [
     path('login/', LoginView.as_view(), name='token_obtain_pair'),
     path('refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     path('trabajadores/registro/', RegistrarTrabajadorView.as_view(), name='registro_trabajador'),
-    # 🚨 Endpoint especializado para alertas de vacunación
+    # Endpoints de alertas y dashboard
+    path('alertas/', alertas_dashboard, name='alertas'),
     path('dashboard/alertas-vacunacion/', alertas_dashboard, name='alertas_dashboard'),
-    # 🏥 Endpoint para obtener veterinario externo
+    # Endpoint para obtener veterinario externo
     path('veterinario-externo/', get_veterinario_externo, name='veterinario-externo'),
 ]

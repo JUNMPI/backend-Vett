@@ -9,6 +9,7 @@ from rest_framework.permissions import AllowAny
 
 from django.shortcuts import get_object_or_404
 from django.db import transaction, IntegrityError
+from django.core.exceptions import ValidationError
 
 # ViewSet for Especialidad
 class EspecialidadViewSet(viewsets.ModelViewSet):
@@ -910,7 +911,7 @@ class VacunaViewSet(viewsets.ModelViewSet):
 
             data = request.data
             
-            # 🔍 DEBUG: Validar que la vacuna existe y tiene datos correctos
+            # DEBUG: Validar que la vacuna existe y tiene datos correctos
             if not vacuna:
                 return Response({
                     'success': False,
@@ -962,11 +963,27 @@ class VacunaViewSet(viewsets.ModelViewSet):
                 # 🎯 MODO DOSIS INDIVIDUAL (lógica existente)
                 return self._aplicar_dosis_individual(vacuna, data)
         
-        except Exception as e:
+        except ValidationError as ve:
             return Response({
                 'success': False,
-                'message': f'Error aplicando vacuna: {str(e)}',
-                'error_code': 'APPLICATION_ERROR',
+                'message': f'Datos invalidos: {str(ve)}',
+                'error_code': 'VALIDATION_ERROR',
+                'status': 'error'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        except ValueError as ve:
+            return Response({
+                'success': False,
+                'message': f'Datos invalidos: {str(ve)}',
+                'error_code': 'VALIDATION_ERROR',
+                'status': 'error'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            # Log del error para debugging
+            print(f"ERROR INESPERADO en aplicar vacuna: {str(e)}")
+            return Response({
+                'success': False,
+                'message': 'Error interno del servidor',
+                'error_code': 'INTERNAL_SERVER_ERROR',
                 'status': 'error'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
@@ -1144,7 +1161,7 @@ class VacunaViewSet(viewsets.ModelViewSet):
             if dosis_numero_frontend > dosis_maxima_protocolo:
                 return Response({
                     'success': False,
-                    'message': f'❌ Dosis inválida: Se intentó aplicar dosis {dosis_numero_frontend} pero el protocolo de {vacuna.nombre} solo requiere {dosis_maxima_protocolo} dosis máximo.',
+                    'message': f'ERROR: Dosis inválida: Se intentó aplicar dosis {dosis_numero_frontend} pero el protocolo de {vacuna.nombre} solo requiere {dosis_maxima_protocolo} dosis máximo.',
                     'error_code': 'PROTOCOL_DOSE_EXCEEDED',
                     'debug_info': {
                         'dosis_solicitada': dosis_numero_frontend,
@@ -1158,7 +1175,7 @@ class VacunaViewSet(viewsets.ModelViewSet):
             if dosis_numero_frontend > 5:
                 return Response({
                     'success': False,
-                    'message': f'⚠️ Dosis {dosis_numero_frontend} requiere autorización veterinaria especial. Límite de seguridad: 5 dosis.',
+                    'message': f'AVISO: Dosis {dosis_numero_frontend} requiere autorización veterinaria especial. Límite de seguridad: 5 dosis.',
                     'error_code': 'DOSE_REQUIRES_AUTHORIZATION',
                     'status': 'error'
                 }, status=status.HTTP_400_BAD_REQUEST)
@@ -1281,28 +1298,28 @@ class VacunaViewSet(viewsets.ModelViewSet):
             
             # 4. 🔥 VERIFICAR DOSIS ATRASADAS CON PROTOCOLO INTELIGENTE (FIXED + DEBUG)
             ultima_aplicacion = historial_previo_query.last()
-            print(f"🔍 DEBUG vencida_reinicio: historial_count={historial_count}, ultima_aplicacion={ultima_aplicacion}")
+            print(f"DEBUG vencida_reinicio: historial_count={historial_count}, ultima_aplicacion={ultima_aplicacion}")
 
             if ultima_aplicacion and historial_count > 0:
                 # 🚨 FIX CRÍTICO: Comparar con próxima_fecha esperada, NO con fecha_aplicacion
                 dias_desde_proxima_esperada = (fecha_aplicacion - ultima_aplicacion.proxima_fecha).days
-                print(f"🔍 DEBUG: dias_desde_proxima_esperada={dias_desde_proxima_esperada}, ultima_proxima={ultima_aplicacion.proxima_fecha}")
+                print(f"DEBUG: dias_desde_proxima_esperada={dias_desde_proxima_esperada}, ultima_proxima={ultima_aplicacion.proxima_fecha}")
 
                 # Calcular máximo atraso permitido según el protocolo actual
                 dosis_previa = historial_count  # La dosis anterior (1-based)
-                print(f"🔍 DEBUG: dosis_previa={dosis_previa}, protocolo_intervalos={protocolo_info.get('intervalos')}")
+                print(f"DEBUG: dosis_previa={dosis_previa}, protocolo_intervalos={protocolo_info.get('intervalos')}")
 
                 if protocolo_info['intervalos'] and dosis_previa <= len(protocolo_info['intervalos']):
                     # Usar intervalo específico del protocolo
                     intervalo_esperado_semanas = protocolo_info['intervalos'][dosis_previa - 1]
                     max_atraso_dinamico = (intervalo_esperado_semanas * 7) + 21  # Intervalo + 3 semanas tolerancia
-                    print(f"🔍 DEBUG: Usando intervalo protocolo: {intervalo_esperado_semanas} semanas, max_atraso_dinamico={max_atraso_dinamico}")
+                    print(f"DEBUG: Usando intervalo protocolo: {intervalo_esperado_semanas} semanas, max_atraso_dinamico={max_atraso_dinamico}")
                 else:
                     # Fallback: usar configuración base
                     max_atraso_dinamico = vacuna.max_dias_atraso
-                    print(f"🔍 DEBUG: Usando max_dias_atraso base: {max_atraso_dinamico}")
+                    print(f"DEBUG: Usando max_dias_atraso base: {max_atraso_dinamico}")
 
-                print(f"🔍 DEBUG: Comparando {dias_desde_proxima_esperada} > {max_atraso_dinamico}? {dias_desde_proxima_esperada > max_atraso_dinamico}")
+                print(f"DEBUG: Comparando {dias_desde_proxima_esperada} > {max_atraso_dinamico}? {dias_desde_proxima_esperada > max_atraso_dinamico}")
 
                 # 🔥 LÓGICA CORREGIDA: Usar días desde próxima fecha esperada
                 if dias_desde_proxima_esperada > max_atraso_dinamico:
@@ -1317,7 +1334,7 @@ class VacunaViewSet(viewsets.ModelViewSet):
                     print(f"🚀 PROTOCOLO REINICIADO: {dias_desde_proxima_esperada} días desde próxima fecha > {max_atraso_dinamico} días permitidos")
                     print(f"📝 {registros_actualizados} registros marcados como vencida_reinicio")
                 else:
-                    print(f"🔍 DEBUG: NO se reinicia protocolo. {dias_desde_proxima_esperada} <= {max_atraso_dinamico}")
+                    print(f"DEBUG: NO se reinicia protocolo. {dias_desde_proxima_esperada} <= {max_atraso_dinamico}")
             
             # 5. CALCULAR PRÓXIMA FECHA (ALGORITMO UNIVERSAL)
             dosis_total_efectiva = protocolo_info['dosis_total']
@@ -1389,7 +1406,7 @@ class VacunaViewSet(viewsets.ModelViewSet):
                     fecha_aplicacion=fecha_aplicacion,
                     proxima_fecha=proxima_fecha,
                     veterinario_id=data['veterinario_id'],
-                    dosis_numero=dosis_real_en_protocolo,  # ✅ Usar dosis calculada
+                    dosis_numero=dosis_real_en_protocolo,  # Usar dosis calculada
                     lote=data.get('lote', ''),
                     observaciones=data.get('observaciones', ''),
                     estado='vigente' if es_dosis_final else 'aplicada'  # Estado correcto
@@ -1707,7 +1724,7 @@ def alertas_dashboard(request):
     from django.db.models import Q
     
     try:
-        # 🧹 LIMPIEZA Y ACTUALIZACIÓN AUTOMÁTICA DE ESTADOS
+        # LIMPIEZA Y ACTUALIZACIÓN AUTOMÁTICA DE ESTADOS
         fecha_limpieza = date.today() - timedelta(days=7)
         fecha_hoy = date.today()
         fecha_proxima = date.today() + timedelta(days=7)
@@ -1732,7 +1749,7 @@ def alertas_dashboard(request):
             estado='aplicada'
         ).update(estado='proxima')
 
-        # 3. 🚀 PROGRESIÓN AUTOMÁTICA DE MULTI-DOSIS (FIX GIARDIA)
+        # 3. PROGRESIÓN AUTOMÁTICA DE MULTI-DOSIS (FIX GIARDIA)
         # Encontrar vacunas vencidas que necesitan pasar a la siguiente dosis
         from dateutil.relativedelta import relativedelta
         from django.db.models import F
@@ -1768,17 +1785,17 @@ def alertas_dashboard(request):
                 registro_vencido.estado = 'completado'
                 registro_vencido.save()
 
-                print(f"🚀 AUTO-PROGRESIÓN: {registro_vencido.vacuna.nombre} - Dosis {registro_vencido.dosis_numero} → Dosis {siguiente_dosis.dosis_numero} para {registro_vencido.mascota.nombreMascota}")
+                print(f"AUTO-PROGRESIÓN: {registro_vencido.vacuna.nombre} - Dosis {registro_vencido.dosis_numero} -> Dosis {siguiente_dosis.dosis_numero} para {registro_vencido.mascota.nombreMascota}")
         
         # Vacunas próximas a vencer (próximos 7 días) y TODAS las vencidas pendientes
         fecha_alerta = date.today() + timedelta(days=7)
 
         alertas_query = HistorialVacunacion.objects.filter(
-            Q(proxima_fecha__lt=date.today()) |  # 🚨 TODAS las vencidas (sin límite de tiempo)
+            Q(proxima_fecha__lt=date.today()) |  # TODAS las vencidas (sin límite de tiempo)
             Q(proxima_fecha__lte=fecha_alerta, proxima_fecha__gte=date.today()) |   # Próximas a vencer (7 días)
-            Q(estado='vencida_reinicio')  # 🆕 INCLUIR vacunas que necesitan reinicio
+            Q(estado='vencida_reinicio')  # INCLUIR vacunas que necesitan reinicio
         ).exclude(
-            estado='completado'  # 🚫 EXCLUIR vacunas ya completadas/reemplazadas
+            estado='completado'  # EXCLUIR vacunas ya completadas/reemplazadas
         ).select_related(
             'mascota', 'vacuna', 'mascota__responsable', 'veterinario'
         ).order_by('proxima_fecha')
@@ -1790,7 +1807,7 @@ def alertas_dashboard(request):
         for item in alertas_query:
             dias_restantes = (item.proxima_fecha - date.today()).days
             
-            # 🚨 MANEJAR ESTADO VENCIDA_REINICIO CON PRIORIDAD MÁXIMA
+            # MANEJAR ESTADO VENCIDA_REINICIO CON PRIORIDAD MÁXIMA
             if item.estado == 'vencida_reinicio':
                 estado_alert = 'vencida'
                 vencidas_count += 1
@@ -1929,3 +1946,5 @@ class HistorialMedicoViewSet(viewsets.ModelViewSet):
         }
         
         return Response(resumen)
+
+
