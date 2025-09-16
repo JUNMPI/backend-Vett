@@ -8,6 +8,7 @@ from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny
 
 from django.shortcuts import get_object_or_404
+from django.db import transaction, IntegrityError
 
 # ViewSet for Especialidad
 class EspecialidadViewSet(viewsets.ModelViewSet):
@@ -362,7 +363,48 @@ class ProductoViewSet(viewsets.ModelViewSet):
     
 class MascotaViewSet(viewsets.ModelViewSet):
     queryset = Mascota.objects.all()
-    serializer_class = MascotaSerializer 
+    serializer_class = MascotaSerializer
+
+    def create(self, request, *args, **kwargs):
+        """
+        🛡️ CORRECCION CRITICA: Sanitización de caracteres especiales
+        """
+        import re
+        import html
+
+        data = request.data.copy()
+
+        # Lista de campos de texto que necesitan sanitización
+        campos_texto = ['nombreMascota', 'raza', 'color', 'observaciones']
+
+        for campo in campos_texto:
+            if campo in data and data[campo]:
+                valor = str(data[campo])
+
+                # 1. Escape HTML para prevenir XSS
+                valor = html.escape(valor)
+
+                # 2. Remover caracteres peligrosos específicos
+                caracteres_peligrosos = ['<', '>', '"', "'", '&', 'script', 'javascript', 'onload', 'onerror']
+                for char in caracteres_peligrosos:
+                    valor = valor.replace(char, '')
+
+                # 3. Limitar longitud (prevenir DoS)
+                if len(valor) > 100:
+                    valor = valor[:100]
+
+                # 4. Validar que no sea solo espacios
+                if not valor.strip():
+                    return Response({
+                        'error': f'Campo {campo} no puede estar vacío o contener solo espacios',
+                        'error_code': 'INVALID_FIELD_VALUE'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+
+                data[campo] = valor.strip()
+
+        # Continuar con la creación normal
+        request._full_data = data
+        return super().create(request, *args, **kwargs)
 
     # Filtra mascotas activas por defecto
     @action(detail=False, methods=['get'], url_path='activas')
@@ -831,6 +873,7 @@ class VacunaViewSet(viewsets.ModelViewSet):
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     @action(detail=True, methods=['post'], url_path='aplicar')
+    @transaction.atomic
     def aplicar(self, request, pk=None):
         """
         🎯 ENDPOINT PRINCIPAL: Aplicar vacuna con cálculo automático inteligente
@@ -847,7 +890,24 @@ class VacunaViewSet(viewsets.ModelViewSet):
         }
         """
         try:
-            vacuna = self.get_object()  # Obtener vacuna por ID de la URL
+            # 🛡️ CORRECCION CRITICA: Manejo seguro de vacunas inexistentes
+            try:
+                vacuna = self.get_object()  # Obtener vacuna por ID de la URL
+            except Vacuna.DoesNotExist:
+                return Response({
+                    'success': False,
+                    'message': f'Vacuna no encontrada con ID: {pk}',
+                    'error_code': 'VACCINE_NOT_FOUND',
+                    'status': 'error'
+                }, status=status.HTTP_404_NOT_FOUND)
+            except Exception as e:
+                return Response({
+                    'success': False,
+                    'message': f'Error al obtener vacuna: {str(e)}',
+                    'error_code': 'VACCINE_LOOKUP_ERROR',
+                    'status': 'error'
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
             data = request.data
             
             # 🔍 DEBUG: Validar que la vacuna existe y tiene datos correctos
@@ -1077,18 +1137,61 @@ class VacunaViewSet(viewsets.ModelViewSet):
                     'status': 'error'
                 }, status=status.HTTP_400_BAD_REQUEST)
             
-            # ⭐ VALIDACIÓN DE PROTOCOLO RELAJADA: Solo advertir en casos extremos
-            # Validar solo casos muy extremos (más de 10 dosis)
-            if dosis_numero_frontend > 10:
+            # 🛡️ CORRECCION CRITICA: Validación ESTRICTA de límites de protocolo
+            dosis_maxima_protocolo = vacuna.dosis_total
+
+            # 1. Validar que la dosis no exceda el protocolo de la vacuna
+            if dosis_numero_frontend > dosis_maxima_protocolo:
                 return Response({
                     'success': False,
-                    'message': f'Dosis {dosis_numero_frontend} muy alta. Se requiere revisión veterinaria.',
-                    'error_code': 'DOSE_REQUIRES_REVIEW',
+                    'message': f'❌ Dosis inválida: Se intentó aplicar dosis {dosis_numero_frontend} pero el protocolo de {vacuna.nombre} solo requiere {dosis_maxima_protocolo} dosis máximo.',
+                    'error_code': 'PROTOCOL_DOSE_EXCEEDED',
+                    'debug_info': {
+                        'dosis_solicitada': dosis_numero_frontend,
+                        'dosis_maxima_protocolo': dosis_maxima_protocolo,
+                        'vacuna_nombre': vacuna.nombre
+                    },
+                    'status': 'error'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # 2. Validar límite absoluto de seguridad (más de 5 dosis es extremo)
+            if dosis_numero_frontend > 5:
+                return Response({
+                    'success': False,
+                    'message': f'⚠️ Dosis {dosis_numero_frontend} requiere autorización veterinaria especial. Límite de seguridad: 5 dosis.',
+                    'error_code': 'DOSE_REQUIRES_AUTHORIZATION',
                     'status': 'error'
                 }, status=status.HTTP_400_BAD_REQUEST)
             
-            # ⭐ VALIDACIÓN ANTI-DUPLICADOS INTELIGENTE: Solo prevenir duplicados exactos
-            # 1. No permitir misma vacuna, mismo día, MISMA DOSIS (duplicado real)
+            # 🛡️ CORRECCION CRITICA: Validación anti-duplicados ESTRICTA con timing
+            from django.utils import timezone
+            from datetime import timedelta
+
+            # 1. VALIDACIÓN TEMPORAL ESTRICTA: Prevenir aplicaciones en ventana de 30 segundos
+            timeframe_critico = timezone.now() - timedelta(seconds=30)
+
+            aplicaciones_recientes = HistorialVacunacion.objects.filter(
+                mascota_id=data['mascota_id'],
+                vacuna=vacuna,
+                fecha_aplicacion=fecha_aplicacion,
+                dosis_numero=dosis_numero_frontend,
+                creado__gte=timeframe_critico,  # Solo últimos 30 segundos
+                estado__in=['aplicada', 'vigente', 'completado']
+            )
+
+            if aplicaciones_recientes.exists():
+                return Response({
+                    'success': False,
+                    'message': f'🚨 Duplicado detectado: Se intentó aplicar la misma dosis en los últimos 30 segundos. Esto podría ser un doble-click accidental.',
+                    'error_code': 'RECENT_DUPLICATE_DETECTED',
+                    'debug_info': {
+                        'timeframe': '30 segundos',
+                        'aplicaciones_encontradas': aplicaciones_recientes.count()
+                    },
+                    'status': 'error'
+                }, status=status.HTTP_409_CONFLICT)
+
+            # 2. VALIDACIÓN DIARIA: No permitir misma vacuna, mismo día, MISMA DOSIS
             aplicaciones_duplicadas = HistorialVacunacion.objects.filter(
                 mascota_id=data['mascota_id'],
                 vacuna=vacuna,
@@ -1176,31 +1279,45 @@ class VacunaViewSet(viewsets.ModelViewSet):
                 protocolo_info['dosis_total'] = vacuna.dosis_total
                 protocolo_info['intervalos'] = [vacuna.intervalo_dosis_semanas] * (vacuna.dosis_total - 1)
             
-            # 4. VERIFICAR DOSIS ATRASADAS CON PROTOCOLO INTELIGENTE
+            # 4. 🔥 VERIFICAR DOSIS ATRASADAS CON PROTOCOLO INTELIGENTE (FIXED + DEBUG)
             ultima_aplicacion = historial_previo_query.last()
+            print(f"🔍 DEBUG vencida_reinicio: historial_count={historial_count}, ultima_aplicacion={ultima_aplicacion}")
+
             if ultima_aplicacion and historial_count > 0:
-                dias_desde_ultima = (fecha_aplicacion - ultima_aplicacion.fecha_aplicacion).days
-                
+                # 🚨 FIX CRÍTICO: Comparar con próxima_fecha esperada, NO con fecha_aplicacion
+                dias_desde_proxima_esperada = (fecha_aplicacion - ultima_aplicacion.proxima_fecha).days
+                print(f"🔍 DEBUG: dias_desde_proxima_esperada={dias_desde_proxima_esperada}, ultima_proxima={ultima_aplicacion.proxima_fecha}")
+
                 # Calcular máximo atraso permitido según el protocolo actual
                 dosis_previa = historial_count  # La dosis anterior (1-based)
-                
+                print(f"🔍 DEBUG: dosis_previa={dosis_previa}, protocolo_intervalos={protocolo_info.get('intervalos')}")
+
                 if protocolo_info['intervalos'] and dosis_previa <= len(protocolo_info['intervalos']):
                     # Usar intervalo específico del protocolo
                     intervalo_esperado_semanas = protocolo_info['intervalos'][dosis_previa - 1]
                     max_atraso_dinamico = (intervalo_esperado_semanas * 7) + 21  # Intervalo + 3 semanas tolerancia
+                    print(f"🔍 DEBUG: Usando intervalo protocolo: {intervalo_esperado_semanas} semanas, max_atraso_dinamico={max_atraso_dinamico}")
                 else:
                     # Fallback: usar configuración base
                     max_atraso_dinamico = vacuna.max_dias_atraso
-                
-                if dias_desde_ultima > max_atraso_dinamico:
+                    print(f"🔍 DEBUG: Usando max_dias_atraso base: {max_atraso_dinamico}")
+
+                print(f"🔍 DEBUG: Comparando {dias_desde_proxima_esperada} > {max_atraso_dinamico}? {dias_desde_proxima_esperada > max_atraso_dinamico}")
+
+                # 🔥 LÓGICA CORREGIDA: Usar días desde próxima fecha esperada
+                if dias_desde_proxima_esperada > max_atraso_dinamico:
                     reiniciar_protocolo = True
-                    HistorialVacunacion.objects.filter(
+                    # Marcar registros previos como vencida_reinicio
+                    registros_actualizados = HistorialVacunacion.objects.filter(
                         mascota_id=data['mascota_id'],
                         vacuna=vacuna,
-                        estado__in=['aplicada', 'vigente']
+                        estado__in=['aplicada', 'vigente', 'vencida']  # 🆕 Incluir 'vencida'
                     ).update(estado='vencida_reinicio')
                     dosis_real_en_protocolo = 1  # Reiniciar como dosis 1
-                    print(f"Protocolo reiniciado: {dias_desde_ultima} días > {max_atraso_dinamico} días permitidos")
+                    print(f"🚀 PROTOCOLO REINICIADO: {dias_desde_proxima_esperada} días desde próxima fecha > {max_atraso_dinamico} días permitidos")
+                    print(f"📝 {registros_actualizados} registros marcados como vencida_reinicio")
+                else:
+                    print(f"🔍 DEBUG: NO se reinicia protocolo. {dias_desde_proxima_esperada} <= {max_atraso_dinamico}")
             
             # 5. CALCULAR PRÓXIMA FECHA (ALGORITMO UNIVERSAL)
             dosis_total_efectiva = protocolo_info['dosis_total']
@@ -1246,18 +1363,44 @@ class VacunaViewSet(viewsets.ModelViewSet):
                 intervalo_usado = f"{vacuna.frecuencia_meses} meses (fallback)"
                 print(f"WARNING: Usando fallback por error: {str(calc_error)}")
             
-            # 📝 Crear nuevo registro PRIMERO (sin marcar anteriores aún)
-            historial = HistorialVacunacion.objects.create(
+            # 🔒 VERIFICACIÓN FINAL ANTI-RACE CONDITION: Verificar duplicados otra vez
+            # Esta verificación ocurre dentro de la transacción atómica
+            verificacion_final = HistorialVacunacion.objects.filter(
                 mascota_id=data['mascota_id'],
                 vacuna=vacuna,
                 fecha_aplicacion=fecha_aplicacion,
-                proxima_fecha=proxima_fecha,
-                veterinario_id=data['veterinario_id'],
-                dosis_numero=dosis_real_en_protocolo,  # ✅ Usar dosis calculada
-                lote=data.get('lote', ''),
-                observaciones=data.get('observaciones', ''),
-                estado='vigente' if es_dosis_final else 'aplicada'  # Estado correcto
+                dosis_numero=dosis_numero_frontend,
+                estado__in=['aplicada', 'vigente', 'completado']
             )
+
+            if verificacion_final.exists():
+                return Response({
+                    'success': False,
+                    'message': f'🔒 Race condition detectada: Otro proceso ya aplicó esta vacuna durante la validación.',
+                    'error_code': 'RACE_CONDITION_DUPLICATE',
+                    'status': 'error'
+                }, status=status.HTTP_409_CONFLICT)
+
+            # 📝 Crear nuevo registro PRIMERO (sin marcar anteriores aún)
+            try:
+                historial = HistorialVacunacion.objects.create(
+                    mascota_id=data['mascota_id'],
+                    vacuna=vacuna,
+                    fecha_aplicacion=fecha_aplicacion,
+                    proxima_fecha=proxima_fecha,
+                    veterinario_id=data['veterinario_id'],
+                    dosis_numero=dosis_real_en_protocolo,  # ✅ Usar dosis calculada
+                    lote=data.get('lote', ''),
+                    observaciones=data.get('observaciones', ''),
+                    estado='vigente' if es_dosis_final else 'aplicada'  # Estado correcto
+                )
+            except IntegrityError as e:
+                return Response({
+                    'success': False,
+                    'message': f'🔒 Error de integridad: Posible duplicado detectado.',
+                    'error_code': 'INTEGRITY_ERROR_DUPLICATE',
+                    'status': 'error'
+                }, status=status.HTTP_409_CONFLICT)
             
             # 🔄 SOLO marcar registros anteriores como completado SI es dosis final
             if es_dosis_final or dosis_real_en_protocolo >= dosis_total_efectiva:
@@ -1588,13 +1731,50 @@ def alertas_dashboard(request):
             proxima_fecha__gte=fecha_hoy,
             estado='aplicada'
         ).update(estado='proxima')
+
+        # 3. 🚀 PROGRESIÓN AUTOMÁTICA DE MULTI-DOSIS (FIX GIARDIA)
+        # Encontrar vacunas vencidas que necesitan pasar a la siguiente dosis
+        from dateutil.relativedelta import relativedelta
+        from django.db.models import F
+
+        vacunas_multidosis_vencidas = HistorialVacunacion.objects.filter(
+            proxima_fecha__lt=fecha_hoy,
+            estado='vencida',
+            dosis_numero__lt=F('vacuna__dosis_total')  # Dose < total required
+        ).select_related('vacuna', 'mascota', 'veterinario')
+
+        for registro_vencido in vacunas_multidosis_vencidas:
+            # Check if next dose already exists
+            siguiente_dosis_existente = HistorialVacunacion.objects.filter(
+                mascota=registro_vencido.mascota,
+                vacuna=registro_vencido.vacuna,
+                dosis_numero=registro_vencido.dosis_numero + 1
+            ).exists()
+
+            if not siguiente_dosis_existente:
+                # Create next dose record
+                siguiente_dosis = HistorialVacunacion.objects.create(
+                    mascota=registro_vencido.mascota,
+                    vacuna=registro_vencido.vacuna,
+                    fecha_aplicacion=fecha_hoy,  # Set as today (to be applied)
+                    proxima_fecha=fecha_hoy + timedelta(weeks=registro_vencido.vacuna.intervalo_dosis_semanas),
+                    veterinario=registro_vencido.veterinario,
+                    dosis_numero=registro_vencido.dosis_numero + 1,
+                    estado='proxima',  # Next dose is pending
+                    observaciones=f'Dosis {registro_vencido.dosis_numero + 1} creada automáticamente tras vencimiento de dosis {registro_vencido.dosis_numero}'
+                )
+
+                # Mark the previous dose as completed (replaced by next dose)
+                registro_vencido.estado = 'completado'
+                registro_vencido.save()
+
+                print(f"🚀 AUTO-PROGRESIÓN: {registro_vencido.vacuna.nombre} - Dosis {registro_vencido.dosis_numero} → Dosis {siguiente_dosis.dosis_numero} para {registro_vencido.mascota.nombreMascota}")
         
-        # Vacunas próximas a vencer (próximos 7 días) y vencidas (máximo 1 semana atrás)
+        # Vacunas próximas a vencer (próximos 7 días) y TODAS las vencidas pendientes
         fecha_alerta = date.today() + timedelta(days=7)
-        fecha_vencida_limite = date.today() - timedelta(days=7)  # Solo mostrar vencidas de última semana
-        
+
         alertas_query = HistorialVacunacion.objects.filter(
-            Q(proxima_fecha__gte=fecha_vencida_limite, proxima_fecha__lt=date.today()) |  # Vencidas (máximo 1 semana)
+            Q(proxima_fecha__lt=date.today()) |  # 🚨 TODAS las vencidas (sin límite de tiempo)
             Q(proxima_fecha__lte=fecha_alerta, proxima_fecha__gte=date.today()) |   # Próximas a vencer (7 días)
             Q(estado='vencida_reinicio')  # 🆕 INCLUIR vacunas que necesitan reinicio
         ).exclude(
@@ -1689,6 +1869,7 @@ def get_veterinario_externo(request):
             trabajador__email='externo@veterinaria.com'
         )
         return Response({
+            'veterinario_id': str(veterinario_externo.id),
             'veterinario_externo_id': str(veterinario_externo.id),
             'nombre': f"{veterinario_externo.trabajador.nombres} {veterinario_externo.trabajador.apellidos}",
             'mensaje': 'Veterinario para historial de vacunación externa'

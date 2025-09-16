@@ -3,7 +3,13 @@
     "allow": [
       "Bash(python manage.py:*)",
       "Bash(python test:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(git checkout:*)",
+      "Bash(timeout:*)",
+      "Bash(curl:*)",
+      "Bash(dir:*)",
+      "Bash(git push:*)",
+      "Bash(git add:*)"
     ],
     "deny": [],
     "ask": []
