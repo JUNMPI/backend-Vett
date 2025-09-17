@@ -517,7 +517,8 @@ class HistorialVacunacion(models.Model):
         related_name='aplicaciones'
     )
     fecha_aplicacion = models.DateField(
-        help_text="Fecha real de aplicación"
+        null=True, blank=True,
+        help_text="Fecha real de aplicación (NULL para dosis pendientes)"
     )
     proxima_fecha = models.DateField(
         help_text="Próxima fecha calculada automáticamente"

@@ -954,7 +954,7 @@ class VacunaViewSet(viewsets.ModelViewSet):
                 }, status=status.HTTP_400_BAD_REQUEST)
             
             # ⭐ NUEVA LÓGICA: Detectar si es protocolo completo o dosis individual
-            es_protocolo_completo = data.get('protocolo_completo', False)
+            es_protocolo_completo = data.get('protocolo_completo', False) or data.get('aplicar_protocolo_completo', False)
             
             if es_protocolo_completo:
                 # 🎯 MODO PROTOCOLO COMPLETO
@@ -1038,7 +1038,7 @@ class VacunaViewSet(viewsets.ModelViewSet):
                 veterinario=veterinario,
                 lote=data.get('lote', ''),
                 laboratorio=data.get('laboratorio', ''),
-                dosis_numero=dosis_aplicadas,  # Número total de dosis aplicadas
+                dosis_numero=vacuna.dosis_total,  # CORREGIDO: Usar dosis_total de la vacuna
                 observaciones=observaciones_protocolo,
                 estado='vigente'
             )
@@ -1773,7 +1773,7 @@ def alertas_dashboard(request):
                 siguiente_dosis = HistorialVacunacion.objects.create(
                     mascota=registro_vencido.mascota,
                     vacuna=registro_vencido.vacuna,
-                    fecha_aplicacion=fecha_hoy,  # Set as today (to be applied)
+                    fecha_aplicacion=None,  # NULL - to be applied when actually administered
                     proxima_fecha=fecha_hoy + timedelta(weeks=registro_vencido.vacuna.intervalo_dosis_semanas),
                     veterinario=registro_vencido.veterinario,
                     dosis_numero=registro_vencido.dosis_numero + 1,
