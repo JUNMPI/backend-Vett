@@ -131,6 +131,14 @@ class Responsable(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     nombres = models.CharField(max_length=100)
     apellidos = models.CharField(max_length=100)
+    email = models.EmailField(
+        max_length=254,
+        unique=True,
+        null=True,
+        blank=True,
+        help_text="Email del responsable",
+        db_index=True  # Index para búsquedas rápidas
+    )
     telefono = models.CharField(max_length=20)
     direccion = models.CharField(max_length=255)
     ciudad = models.CharField(max_length=100)

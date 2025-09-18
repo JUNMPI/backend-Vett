@@ -126,6 +126,7 @@ class HistorialClinicoSerializer(serializers.ModelSerializer):
 class MascotaSerializer(serializers.ModelSerializer):
     responsable = serializers.PrimaryKeyRelatedField(queryset=Responsable.objects.all())
     nombrecompletoResponsable = serializers.SerializerMethodField()
+    responsable_email = serializers.SerializerMethodField()
     historial_clinico = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
@@ -133,12 +134,15 @@ class MascotaSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'nombreMascota', 'especie', 'raza', 'fechaNacimiento',
             'genero', 'peso', 'color', 'observaciones',
-            'responsable', 'nombrecompletoResponsable',
+            'responsable', 'nombrecompletoResponsable', 'responsable_email',
             'estado', 'historial_clinico'
         ]
 
     def get_nombrecompletoResponsable(self, obj):
         return f"{obj.responsable.nombres} {obj.responsable.apellidos}"
+
+    def get_responsable_email(self, obj):
+        return obj.responsable.email if obj.responsable and obj.responsable.email else None
 
     def get_historial_clinico(self, obj):
         try:
@@ -159,7 +163,7 @@ class ResponsableSerializer(serializers.ModelSerializer):
     class Meta:
         model = Responsable
         fields = [
-            'id', 'nombres', 'apellidos', 'telefono', 'direccion',
+            'id', 'nombres', 'apellidos', 'email', 'telefono', 'direccion',
             'ciudad', 'documento', 'tipodocumento','tipodocumento_nombre', 'emergencia', 'usuario','mascotas'
         ]
 
@@ -189,6 +193,27 @@ class ResponsableSerializer(serializers.ModelSerializer):
             setattr(instance, attr, value)
         instance.save()
         return instance
+
+    def validate_email(self, value):
+        """
+        Validación del campo email
+        """
+        if value:
+            # Verificar que el email sea único (excluyendo el instance actual en updates)
+            if self.instance:
+                # Es una actualización
+                if Responsable.objects.filter(email=value).exclude(id=self.instance.id).exists():
+                    raise serializers.ValidationError("Este email ya está registrado por otro responsable.")
+            else:
+                # Es una creación
+                if Responsable.objects.filter(email=value).exists():
+                    raise serializers.ValidationError("Este email ya está registrado.")
+
+            # Validación adicional de formato (Django ya valida el formato básico)
+            if len(value) > 254:
+                raise serializers.ValidationError("El email es demasiado largo.")
+
+        return value
 
 class DiaTrabajoSerializer(serializers.ModelSerializer):
     class Meta:
