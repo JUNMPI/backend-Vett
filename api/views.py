@@ -1,6 +1,4 @@
 from rest_framework import viewsets, status
-from .models import *
-from .serializers import *
 from rest_framework.decorators import action, api_view
 from rest_framework.response import Response
 from rest_framework_simplejwt.views import TokenObtainPairView
@@ -10,6 +8,32 @@ from rest_framework.permissions import AllowAny
 from django.shortcuts import get_object_or_404
 from django.db import transaction, IntegrityError
 from django.core.exceptions import ValidationError
+from django.db.models import Q, F
+
+# Imports para fechas y tiempo
+from datetime import date, timedelta
+from dateutil.relativedelta import relativedelta
+
+# Imports adicionales
+import uuid
+import re
+import traceback
+
+# Imports específicos de modelos
+from .models import (
+    Especialidad, Consultorio, TipoDocumento, Trabajador, Veterinario,
+    Servicio, Producto, Mascota, Responsable, Cita, Usuario, DiaTrabajo,
+    EstadoCita, Vacuna, HistorialVacunacion, HistorialMedico
+)
+
+# Imports específicos de serializers
+from .serializers import (
+    EspecialidadSerializer, ConsultorioSerializer, TipoDocumentoSerializer,
+    TrabajadorSerializer, VeterinarioSerializer, ServicioSerializer,
+    ProductoSerializer, MascotaSerializer, ResponsableSerializer,
+    CitaSerializer, CustomTokenObtainPairSerializer, VacunaSerializer,
+    HistorialVacunacionSerializer, HistorialMedicoSerializer, VacunasAlertaSerializer
+)
 
 # ViewSet for Especialidad
 class EspecialidadViewSet(viewsets.ModelViewSet):
@@ -1003,9 +1027,9 @@ class VacunaViewSet(viewsets.ModelViewSet):
         try:
             from datetime import date as date_class
             from dateutil.relativedelta import relativedelta
-            
+
             fecha_aplicacion = date_class.fromisoformat(data['fecha_aplicacion'])
-            
+
             # Validar fecha no futura
             if fecha_aplicacion > date_class.today():
                 return Response({
@@ -1014,7 +1038,39 @@ class VacunaViewSet(viewsets.ModelViewSet):
                     'error_code': 'FUTURE_APPLICATION_DATE',
                     'status': 'error'
                 }, status=status.HTTP_400_BAD_REQUEST)
-            
+
+            # 🛡️ VALIDACIÓN ANTI-DUPLICADOS PARA PROTOCOLO COMPLETO
+            # Verificar si ya existe un protocolo completo de esta vacuna para esta mascota
+            protocolos_existentes = HistorialVacunacion.objects.filter(
+                mascota_id=data['mascota_id'],
+                vacuna=vacuna,
+                dosis_numero=vacuna.dosis_total,  # Protocolo completo siempre usa dosis_total
+                estado__in=['aplicada', 'vigente', 'completado']
+            )
+
+            if protocolos_existentes.exists():
+                # Verificar si hay duplicado exacto por fecha
+                protocolo_mismo_dia = protocolos_existentes.filter(fecha_aplicacion=fecha_aplicacion)
+                if protocolo_mismo_dia.exists():
+                    return Response({
+                        'success': False,
+                        'message': f'🚨 Protocolo completo duplicado: Ya existe un protocolo completo de {vacuna.nombre} para esta mascota en la fecha {fecha_aplicacion}',
+                        'error_code': 'DUPLICATE_COMPLETE_PROTOCOL',
+                        'status': 'error'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+
+                # Si hay protocolos anteriores, verificar si realmente necesita uno nuevo
+                return Response({
+                    'success': False,
+                    'message': f'⚠️ Protocolo existente: Esta mascota ya tiene un protocolo completo de {vacuna.nombre}. ¿Desea aplicar un refuerzo en su lugar?',
+                    'error_code': 'EXISTING_COMPLETE_PROTOCOL',
+                    'data': {
+                        'protocolo_existente': True,
+                        'sugerencia': 'Usar dosis individual para refuerzo'
+                    },
+                    'status': 'warning'
+                }, status=status.HTTP_409_CONFLICT)
+
             # Determinar cuántas dosis se aplicaron
             dosis_aplicadas = data.get('dosis_aplicadas', vacuna.dosis_total)
             
@@ -1072,15 +1128,20 @@ class VacunaViewSet(viewsets.ModelViewSet):
                 },
                 'status': 'success'
             })
-            
+
         except Exception as e:
+            # Log detallado del error para debugging
+            print(f"ERROR EN PROTOCOLO COMPLETO: {str(e)}")
+            print(f"TIPO ERROR: {type(e)}")
+            import traceback
+            print(f"TRACEBACK: {traceback.format_exc()}")
             return Response({
                 'success': False,
                 'message': f'Error aplicando protocolo completo: {str(e)}',
                 'error_code': 'PROTOCOL_APPLICATION_ERROR',
                 'status': 'error'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    
+
     def _aplicar_dosis_individual(self, vacuna, data):
         """Aplicar dosis individual (lógica existente)"""
         try:
