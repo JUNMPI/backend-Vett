@@ -891,6 +891,17 @@ class VacunaViewSet(viewsets.ModelViewSet):
         }
         """
         try:
+            # DEBUGGING ESPECIFICO SOLICITADO POR FRONTEND
+            print("DEBUGGING DOSIS RECIBIDO:")
+            print("- dosis_numero:", request.data.get('dosis_numero'))
+            print("- tipo dosis_numero:", type(request.data.get('dosis_numero')))
+            print("- aplicar_protocolo_completo:", request.data.get('aplicar_protocolo_completo'))
+            print("- datos completos:", request.data)
+
+            # Verificar si la validación está fallando en caso específico
+            if request.data.get('dosis_numero') == 9:
+                print("CASO ESPECIFICO DETECTADO: Dosis 9 de 10")
+
             # 🛡️ CORRECCION CRITICA: Manejo seguro de vacunas inexistentes
             try:
                 vacuna = self.get_object()  # Obtener vacuna por ID de la URL
@@ -1157,6 +1168,13 @@ class VacunaViewSet(viewsets.ModelViewSet):
             # 🛡️ CORRECCION CRITICA: Validación ESTRICTA de límites de protocolo
             dosis_maxima_protocolo = vacuna.dosis_total
 
+            # DEBUGGING ADICIONAL PARA CASO ESPECIFICO
+            print(f"VALIDACION DE DOSIS:")
+            print(f"- dosis_numero_frontend: {dosis_numero_frontend}")
+            print(f"- dosis_maxima_protocolo (vacuna.dosis_total): {dosis_maxima_protocolo}")
+            print(f"- vacuna.nombre: {vacuna.nombre}")
+            print(f"- Validacion: {dosis_numero_frontend} > {dosis_maxima_protocolo} = {dosis_numero_frontend > dosis_maxima_protocolo}")
+
             # 1. Validar que la dosis no exceda el protocolo de la vacuna
             if dosis_numero_frontend > dosis_maxima_protocolo:
                 return Response({
@@ -1171,11 +1189,14 @@ class VacunaViewSet(viewsets.ModelViewSet):
                     'status': 'error'
                 }, status=status.HTTP_400_BAD_REQUEST)
 
-            # 2. Validar límite absoluto de seguridad (más de 5 dosis es extremo)
-            if dosis_numero_frontend > 5:
+            # 2. Validar límite absoluto de seguridad - CORREGIDO: Usar dosis_total de la vacuna
+            # Solo aplicar límite si excede AMPLIAMENTE el protocolo de la vacuna
+            limite_seguridad_absoluto = max(dosis_maxima_protocolo, 5)  # Al menos 5, o el protocolo de la vacuna
+
+            if dosis_numero_frontend > limite_seguridad_absoluto and dosis_numero_frontend > 15:  # Solo para casos extremos >15
                 return Response({
                     'success': False,
-                    'message': f'AVISO: Dosis {dosis_numero_frontend} requiere autorización veterinaria especial. Límite de seguridad: 5 dosis.',
+                    'message': f'AVISO: Dosis {dosis_numero_frontend} excede límites médicos extremos. Máximo recomendado: {limite_seguridad_absoluto} dosis.',
                     'error_code': 'DOSE_REQUIRES_AUTHORIZATION',
                     'status': 'error'
                 }, status=status.HTTP_400_BAD_REQUEST)
