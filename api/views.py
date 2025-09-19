@@ -867,7 +867,7 @@ class VacunaViewSet(viewsets.ModelViewSet):
                 laboratorio=data.get('laboratorio', ''),
                 dosis_numero=dosis_aplicadas,  # Número total de dosis aplicadas
                 observaciones=observaciones_protocolo,
-                estado='vigente'
+                estado='aplicada'  # 🆕 Siempre aplicada al crear, el serializer calculará dinámicamente
             )
             
             return Response({
@@ -1107,7 +1107,7 @@ class VacunaViewSet(viewsets.ModelViewSet):
                 laboratorio=data.get('laboratorio', ''),
                 dosis_numero=vacuna.dosis_total,  # CORREGIDO: Usar dosis_total de la vacuna
                 observaciones=observaciones_protocolo,
-                estado='vigente'
+                estado='aplicada'  # 🆕 Siempre aplicada al crear, el serializer calculará dinámicamente
             )
             
             return Response({
@@ -1491,7 +1491,7 @@ class VacunaViewSet(viewsets.ModelViewSet):
                     dosis_numero=dosis_real_en_protocolo,  # Usar dosis calculada
                     lote=data.get('lote', ''),
                     observaciones=data.get('observaciones', ''),
-                    estado='vigente' if es_dosis_final else 'aplicada'  # Estado correcto
+                    estado='aplicada'  # 🆕 Siempre aplicada al crear, el serializer calculará dinámicamente
                 )
             except IntegrityError as e:
                 return Response({
@@ -1604,7 +1604,40 @@ class HistorialVacunacionViewSet(viewsets.ModelViewSet):
             # 📅 Último refuerzo: próximo ciclo anual
             proxima_fecha = fecha_aplicacion + relativedelta(months=vacuna.frecuencia_meses)
             return proxima_fecha
-    
+
+    def calcular_estado_inicial(self, proxima_fecha):
+        """
+        🧠 CALCULAR ESTADO INICIAL CORRECTO al momento de aplicación
+        Garantiza que el estado sea coherente desde la creación
+        """
+        from datetime import date
+
+        # Si no hay próxima fecha, usar estado por defecto
+        if not proxima_fecha:
+            return 'aplicada'
+
+        try:
+            today = date.today()
+            dias_diferencia = (proxima_fecha - today).days
+
+            # 🔍 LÓGICA DE ESTADOS INICIAL:
+            # 1. VENCIDA: Si la próxima fecha ya pasó
+            if dias_diferencia < 0:
+                return 'vencida'
+
+            # 2. PRÓXIMA: Si vence en los próximos 30 días
+            elif 0 <= dias_diferencia <= 30:
+                return 'proxima'
+
+            # 3. VIGENTE: Si vence en más de 30 días
+            else:
+                return 'vigente'
+
+        except Exception as e:
+            # En caso de error, devolver estado seguro
+            print(f"Error calculando estado inicial: {e}")
+            return 'aplicada'
+
     def get_queryset(self):
         mascota_id = self.request.query_params.get('mascota_id')
         if mascota_id:

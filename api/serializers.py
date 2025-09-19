@@ -415,6 +415,7 @@ class HistorialVacunacionSerializer(serializers.ModelSerializer):
     nombre_veterinario = serializers.SerializerMethodField()
     esta_vencida = serializers.SerializerMethodField()
     dias_para_vencer = serializers.SerializerMethodField()
+    estado = serializers.SerializerMethodField()  # 🆕 Calcular estado dinámicamente
     
     class Meta:
         model = HistorialVacunacion
@@ -438,6 +439,37 @@ class HistorialVacunacionSerializer(serializers.ModelSerializer):
     
     def get_dias_para_vencer(self, obj):
         return obj.dias_para_vencer()
+
+    def get_estado(self, obj):
+        """
+        🧠 CALCULAR ESTADO DINÁMICAMENTE según fechas actuales
+        Garantiza que el estado siempre sea coherente con las fechas
+        """
+        from datetime import date
+
+        # Si no hay próxima fecha, usar estado almacenado
+        if not obj.proxima_fecha:
+            return obj.estado
+
+        today = date.today()
+        dias_diferencia = (obj.proxima_fecha - today).days
+
+        # 🔍 LÓGICA DE ESTADOS DINÁMICOS:
+
+        # 1. VENCIDA: Próxima fecha ya pasó
+        if dias_diferencia < 0:
+            # Si está muy vencida (>60 días), podría necesitar reinicio
+            if abs(dias_diferencia) > 60 and obj.vacuna.dosis_total > 1:
+                return 'vencida_reinicio'
+            return 'vencida'
+
+        # 2. PRÓXIMA: Vence en los próximos 30 días
+        elif 0 <= dias_diferencia <= 30:
+            return 'proxima'
+
+        # 3. VIGENTE: Vence en más de 30 días
+        else:
+            return 'vigente'
 
 
 class HistorialMedicoSerializer(serializers.ModelSerializer):
