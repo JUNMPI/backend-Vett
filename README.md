@@ -306,6 +306,32 @@ Este proyecto es de uso educativo y profesional.
 - [x] **Validaciones avanzadas anti-duplicados**
 - [x] **Cálculo automático de próximas fechas de vacunación**
 
+## 💉 **Sistema de Estados de Vacunación**
+
+### **Estados Dinámicos Implementados**
+
+El sistema calcula automáticamente el estado de cada vacuna en tiempo real:
+
+- **`vigente`**: Vacuna activa con protección válida (>30 días para vencer)
+- **`proxima`**: Vence en los próximos 30 días (requiere atención)
+- **`vencida`**: Vencida hace menos de 60 días (requiere refuerzo)
+- **`vencida_reinicio`**: Vencida hace más de 60 días (reiniciar protocolo)
+
+### **Mascota de Prueba para Frontend**
+
+**Luna (Golden Retriever)**
+- **ID**: `e0469d55-9b2c-4ae5-9e0b-f191db1408f3`
+- **Endpoint**: `GET /api/mascotas/e0469d55-9b2c-4ae5-9e0b-f191db1408f3/historial-vacunacion/`
+- **Estados demostrados**: vigente, vencida
+- **Protocolo aplicado**: Quintuple Canina (2 dosis)
+
+### **Características del Sistema**
+- ✅ **Cálculo dinámico**: Los estados se calculan en tiempo real
+- ✅ **Transiciones automáticas**: Cambian automáticamente según fechas
+- ✅ **Protocolos multi-dosis**: Soporte completo para vacunas de múltiples dosis
+- ✅ **Validación de duplicados**: Previene aplicaciones incorrectas
+- ✅ **Historial completo**: Seguimiento detallado por mascota
+
 ### 🔄 **Próximas Características**
 - [ ] Dashboard de métricas
 - [ ] Reportes en PDF

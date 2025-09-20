@@ -1298,7 +1298,7 @@ class VacunaViewSet(viewsets.ModelViewSet):
                 dosis_numero=dosis_numero_frontend,  # Misma dosis = duplicado real
                 estado__in=['aplicada', 'vigente', 'completado']
             )
-            
+
             if aplicaciones_duplicadas.exists():
                 return Response({
                     'success': False,
@@ -1306,6 +1306,51 @@ class VacunaViewSet(viewsets.ModelViewSet):
                     'error_code': 'DUPLICATE_EXACT_DOSE',
                     'status': 'error'
                 }, status=status.HTTP_400_BAD_REQUEST)
+
+            # 🔒 VALIDACIÓN INTELIGENTE: Prevenir duplicados pero permitir refuerzos legítimos
+            aplicaciones_existentes = HistorialVacunacion.objects.filter(
+                mascota_id=data['mascota_id'],
+                vacuna=vacuna,
+                estado__in=['aplicada', 'vigente', 'proxima', 'completado']
+            ).order_by('-fecha_aplicacion')
+
+            if aplicaciones_existentes.exists():
+                ultima_aplicacion = aplicaciones_existentes.first()
+
+                # Calcular días desde última aplicación
+                dias_desde_ultima = (fecha_aplicacion - ultima_aplicacion.fecha_aplicacion).days
+
+                # 🔒 REGLA 1: Prevenir duplicados RECIENTES (menos de 30 días)
+                if dias_desde_ultima < 30:
+                    return Response({
+                        'success': False,
+                        'message': f'{vacuna.nombre} fue aplicada recientemente el {ultima_aplicacion.fecha_aplicacion} (hace {dias_desde_ultima} días). Espere al menos 30 días para reaplicar.',
+                        'error_code': 'RECENTLY_APPLIED',
+                        'status': 'error'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+
+                # 🔒 REGLA 2: Para dosis única, verificar si realmente necesita refuerzo
+                if vacuna.dosis_total == 1:
+                    # Permitir refuerzo solo si la anterior está vencida o próxima a vencer
+                    if ultima_aplicacion.estado in ['vigente'] and dias_desde_ultima < 300:  # ~10 meses
+                        return Response({
+                            'success': False,
+                            'message': f'{vacuna.nombre} aún está vigente (aplicada el {ultima_aplicacion.fecha_aplicacion}). No necesita refuerzo hasta que esté próxima a vencer.',
+                            'error_code': 'VACCINE_STILL_VALID',
+                            'status': 'error'
+                        }, status=status.HTTP_400_BAD_REQUEST)
+
+                # 🔒 REGLA 3: Para multi-dosis, verificar protocolo activo
+                elif aplicaciones_existentes.count() >= vacuna.dosis_total:
+                    # Permitir solo si todas las dosis anteriores están vencidas (reinicio de protocolo)
+                    estados_anteriores = [app.estado for app in aplicaciones_existentes]
+                    if any(estado in ['vigente', 'proxima', 'aplicada'] for estado in estados_anteriores):
+                        return Response({
+                            'success': False,
+                            'message': f'{vacuna.nombre} ya completó su protocolo de {vacuna.dosis_total} dosis y aún tiene protección activa. Para reiniciar protocolo, espere a que todas las dosis estén vencidas.',
+                            'error_code': 'PROTOCOL_STILL_ACTIVE',
+                            'status': 'error'
+                        }, status=status.HTTP_400_BAD_REQUEST)
             
             # 2. Solo validar duplicados exactos en fechas muy cercanas (mismo día con misma dosis ya validado arriba)
             # No validar intervalos - permitir flexibilidad total para uso normal
