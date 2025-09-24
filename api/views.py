@@ -1896,17 +1896,40 @@ def alertas_dashboard(request):
         ).update(estado='completado')
         
         # 2. Actualizar estados según fechas actuales
-        # Marcar como vencidas las que pasaron su fecha
+        # Definir límites de tiempo para clasificación
+        fecha_reinicio = date.today() - timedelta(days=180)  # 6 meses = reinicio
+        fecha_critica = date.today() + timedelta(days=7)
+
+        # PRIMERO: Marcar como vencidas normales las que pasaron su fecha (pero <180 días)
         HistorialVacunacion.objects.filter(
             proxima_fecha__lt=fecha_hoy,
+            proxima_fecha__gte=fecha_reinicio,
             estado='aplicada'
         ).update(estado='vencida')
-        
-        # Marcar como próximas las que están en rango de alerta
+
+        # DESPUÉS: Marcar como vencida_reinicio las muy vencidas (>180 días) - SOBRESCRIBE vencidas normales si es necesario
         HistorialVacunacion.objects.filter(
-            proxima_fecha__lte=fecha_proxima,
+            proxima_fecha__lt=fecha_reinicio,
+            estado__in=['aplicada', 'vencida']
+        ).update(estado='vencida_reinicio')
+
+        # Marcar como críticas las próximas (0-7 días)
+        HistorialVacunacion.objects.filter(
+            proxima_fecha__lte=fecha_critica,
             proxima_fecha__gte=fecha_hoy,
             estado='aplicada'
+        ).exclude(
+            estado='vencida_reinicio'
+        ).update(estado='critica')
+
+        # Marcar como próximas las que están en rango normal (8-30 días)
+        fecha_proxima_normal = date.today() + timedelta(days=30)
+        HistorialVacunacion.objects.filter(
+            proxima_fecha__lte=fecha_proxima_normal,
+            proxima_fecha__gt=fecha_critica,
+            estado='aplicada'
+        ).exclude(
+            estado='vencida_reinicio'
         ).update(estado='proxima')
 
         # 3. PROGRESIÓN AUTOMÁTICA DE MULTI-DOSIS (FIX GIARDIA)
@@ -1947,49 +1970,38 @@ def alertas_dashboard(request):
 
                 print(f"AUTO-PROGRESIÓN: {registro_vencido.vacuna.nombre} - Dosis {registro_vencido.dosis_numero} -> Dosis {siguiente_dosis.dosis_numero} para {registro_vencido.mascota.nombreMascota}")
         
-        # Vacunas próximas a vencer (próximos 7 días) y TODAS las vencidas pendientes
-        fecha_alerta = date.today() + timedelta(days=7)
+        # 🎯 CONSULTA SIMPLE - Solo vencidas y próximas (como solicitó el usuario)
+        fecha_limite = date.today() + timedelta(days=30)  # 30 días hacia futuro
+        fecha_limite_vencidas = date.today() - timedelta(days=180)  # No más de 180 días vencidas
 
         alertas_query = HistorialVacunacion.objects.filter(
-            Q(proxima_fecha__lt=date.today()) |  # TODAS las vencidas (sin límite de tiempo)
-            Q(proxima_fecha__lte=fecha_alerta, proxima_fecha__gte=date.today()) |   # Próximas a vencer (7 días)
-            Q(estado='vencida_reinicio')  # INCLUIR vacunas que necesitan reinicio
+            proxima_fecha__gte=fecha_limite_vencidas,  # No más de 180 días vencidas
+            proxima_fecha__lte=fecha_limite  # No más de 30 días futuras
         ).exclude(
-            estado='completado'  # EXCLUIR vacunas ya completadas/reemplazadas
+            estado='completado'
         ).select_related(
             'mascota', 'vacuna', 'mascota__responsable', 'veterinario'
         ).order_by('proxima_fecha')
-        
+
+        # 📊 CLASIFICACIÓN SIMPLE - Solo dos categorías
         alertas_data = []
         vencidas_count = 0
         proximas_count = 0
-        
+
         for item in alertas_query:
             dias_restantes = (item.proxima_fecha - date.today()).days
-            
-            # MANEJAR ESTADO VENCIDA_REINICIO CON PRIORIDAD MÁXIMA
-            if item.estado == 'vencida_reinicio':
-                estado_alert = 'vencida'
-                vencidas_count += 1
-                prioridad = 'critica'  # Máxima prioridad para reinicio
-                color = 'red'
-            elif dias_restantes < 0:
+
+            # 🎯 SOLO DOS ESTADOS como solicitó el usuario
+            if dias_restantes < 0:  # Vencida (pero no más de 180 días)
                 estado_alert = 'vencida'
                 vencidas_count += 1
                 prioridad = 'alta'
                 color = 'red'
-            elif dias_restantes <= 2:
-                estado_alert = 'critica'
-                proximas_count += 1  
-                prioridad = 'alta'
-                color = 'orange'
-            elif dias_restantes <= 7:
+            else:  # Próxima (0-30 días)
                 estado_alert = 'proxima'
                 proximas_count += 1
                 prioridad = 'media'
                 color = 'yellow'
-            else:
-                continue  # No incluir en alertas
             
             alertas_data.append({
                 'id': str(item.id),
@@ -2002,7 +2014,7 @@ def alertas_dashboard(request):
                 'fecha_aplicacion': item.fecha_aplicacion,
                 'proxima_fecha': item.proxima_fecha,
                 'dias_restantes': dias_restantes,
-                'estado': estado_alert,
+                'estado': estado_alert,  # Estado calculado en tiempo real
                 'prioridad': prioridad,
                 'dosis_numero': item.dosis_numero,
                 'responsable_nombre': f"{item.mascota.responsable.nombres} {item.mascota.responsable.apellidos}",
@@ -2011,12 +2023,14 @@ def alertas_dashboard(request):
                 'color': color
             })
         
-        # Estadísticas del resumen
+        # 📊 ESTADÍSTICAS SIMPLES - Solo dos categorías
+        mascotas_con_alertas = len(set([item['mascota_id'] for item in alertas_data]))
+
         estadisticas = {
             'total_alertas': len(alertas_data),
             'vencidas': vencidas_count,
             'proximas': proximas_count,
-            'criticas': len([a for a in alertas_data if a['prioridad'] == 'alta']),
+            'mascotas_requieren_atencion': mascotas_con_alertas,
             'fecha_consulta': date.today().isoformat()
         }
         
