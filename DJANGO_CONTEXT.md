@@ -657,132 +657,151 @@ class VacunaSerializer(serializers.ModelSerializer):
 
 ---
 
-## 🚨 **SISTEMA DE ALERTAS DE VACUNACIÓN - ACTUALIZACIÓN MAYOR**
+## 🚨 **SISTEMA DE ALERTAS DE VACUNACIÓN - REDISEÑO COMPLETO Y SIMPLIFICADO**
 
-### 📅 **Implementación Completada - Dashboard de Alertas**
+### 📅 **Última Actualización - Dashboard Simplificado**
 
-**Fecha:** 2025-09-07  
-**Estado:** ✅ **COMPLETAMENTE FUNCIONAL**
+**Fecha:** 2025-09-24
+**Estado:** ✅ **COMPLETAMENTE REDISEÑADO Y FUNCIONAL**
+**Versión:** v2.0 - Simplificado
 
-### 🆕 **Nuevo Endpoint Principal:**
+### 🆕 **Endpoint Principal:**
 ```
 GET /api/dashboard/alertas-vacunacion/
 ```
 
-### 🎨 **Sistema de Colores Implementado:**
-| Color | Estado | Días Restantes | Prioridad | UI Frontend |
-|-------|--------|----------------|-----------|-------------|
-| `"red"` | `"vencida"` | < 0 días | Alta | 🔴 Fondo rojo |
-| `"orange"` | `"critica"` | 1-2 días | Alta | 🟠 Fondo naranja |
-| `"yellow"` | `"proxima"` | 3-7 días | Media | 🟡 Fondo amarillo |
+### 🎯 **CAMBIO FUNDAMENTAL - SOLO 2 ESTADOS:**
 
-### 📊 **Respuesta JSON del Dashboard:**
+El sistema ha sido **completamente simplificado** para mostrar solo alertas útiles y relevantes:
+
+| Color | Estado | Días Restantes | Criterio | UI Frontend |
+|-------|--------|----------------|----------|-------------|
+| `"red"` | `"vencida"` | -180 a -1 días | Vencidas recientes | 🔴 Fondo rojo |
+| `"yellow"` | `"proxima"` | 0 a 30 días | Próximas a vencer | 🟡 Fondo amarillo |
+
+**❌ ELIMINADOS:** `critica`, `vencida_reinicio` (sistema simplificado)
+
+### 🔍 **Criterios de Filtrado:**
+- **✅ Incluye:** Vacunas entre -180 días y +30 días (alertas útiles)
+- **❌ Excluye:** Vacunas >180 días vencidas (muy antiguas, no útiles)
+- **❌ Excluye:** Vacunas >30 días futuras (no urgentes)
+
+### 📊 **Nueva Respuesta JSON Simplificada:**
 ```json
 {
   "data": [
     {
       "id": "uuid",
       "mascota_id": "uuid",
-      "mascota_nombre": "Amara",
+      "mascota_nombre": "pendejerete02",
       "mascota_especie": "Perro",
-      "vacuna_id": "uuid", 
-      "vacuna_nombre": "Antirrábica Canina",
+      "vacuna_id": "uuid",
+      "vacuna_nombre": "Sextuple Canina",
       "es_obligatoria": true,
-      "fecha_aplicacion": "2024-09-05",
-      "proxima_fecha": "2025-08-31",
-      "dias_restantes": -7,
-      "estado": "vencida",
+      "fecha_aplicacion": "2025-09-18",
+      "proxima_fecha": "2025-09-18",
+      "dias_restantes": -6,
+      "estado": "vencida",           // Solo 2 estados posibles
       "prioridad": "alta",
-      "dosis_numero": 5,
-      "responsable_nombre": "Piero Castillo Paz",
-      "responsable_telefono": "917468122",
-      "veterinario_nombre": "Demis Andonaire",
-      "color": "red"  // ← 🆕 CAMPO PARA UI
+      "dosis_numero": 2,
+      "responsable_nombre": "Junior Romero",
+      "responsable_telefono": "990998123",
+      "veterinario_nombre": "Veterinario Externo",
+      "color": "red"                 // Solo red o yellow
     }
   ],
   "estadisticas": {
-    "total_alertas": 3,
-    "vencidas": 1,
-    "proximas": 2,
-    "criticas": 2,
-    "fecha_consulta": "2025-09-07"
+    "total_alertas": 69,            // Total exacto
+    "vencidas": 6,                  // Solo días negativos
+    "proximas": 63,                 // Solo días 0-30
+    "mascotas_requieren_atencion": 51,
+    "fecha_consulta": "2025-09-24"
   },
-  "message": "3 alertas de vacunación encontradas", 
+  "message": "69 alertas de vacunación encontradas",
   "status": "success"
 }
 ```
 
-### 🔄 **Estados de Vacunación Actualizados:**
+### 🔄 **Estados Simplificados:**
 ```typescript
-type EstadoVacuna = 
-  | 'aplicada'    // ✅ Vacuna recién aplicada (estado inicial)
-  | 'vigente'     // ✅ Vacuna aún válida  
-  | 'proxima'     // ⏰ Próxima a vencer (3-7 días)
-  | 'critica'     // 🚨 Crítica (1-2 días restantes)  
-  | 'vencida'     // ❌ Ya venció (< 0 días)
-  | 'completado'; // 🚫 Oculta del dashboard (solo para historial)
+// ANTES (complejo):
+type EstadoVacuna = 'aplicada' | 'vigente' | 'proxima' | 'critica' | 'vencida' | 'vencida_reinicio' | 'completado';
+
+// AHORA (simple):
+type EstadoAlerta = 'vencida' | 'proxima';  // Solo 2 estados para alertas
 ```
 
-### 🧹 **Limpieza Automática:**
-- **Automático:** Las alertas vencidas >7 días se marcan como `completado`
-- **Dashboard:** Solo muestra alertas activas (`vencida`, `critica`, `proxima`)
-- **Historial:** Todos los registros permanecen en BD para auditoria médica
-- **Trigger:** Se ejecuta automáticamente en cada llamada al endpoint
+### 🧹 **Filtrado Automático Inteligente:**
+- **Excluye automáticamente:** Casos muy antiguos como brayanhipolitogay (235 días vencida)
+- **Incluye solo alertas útiles:** Que requieren acción real del veterinario
+- **Rango optimal:** -180 días a +30 días para máxima utilidad
 
-### 🎯 **Aplicar Vacuna Mejorado:**
+### 📈 **Consistencia Matemática Garantizada:**
+```javascript
+// Siempre se cumple:
+estadisticas.total_alertas === (estadisticas.vencidas + estadisticas.proximas)
+// Ejemplo: 69 === (6 + 63) ✅
 ```
-POST /api/vacunas/{vacuna_id}/aplicar/
-```
-**Comportamiento actualizado:**
-- Marca registros anteriores como `completado` automáticamente
-- Calcula próxima fecha usando `frecuencia_meses` de la vacuna
-- Crea nuevo registro con estado `aplicada`
-- Evita alertas duplicadas
 
-### 📈 **Migración Aplicada:**
-```
-api.0006_add_completado_estado_historial_vacunacion.py
-```
-- Agregado estado `'completado'` a HistorialVacunacion
-- Backward compatible con estados existentes
+### 🔧 **Frontend Integration (Actualizada):**
 
-### 🔧 **Integración Frontend:**
-**CSS Sugerido:**
+**CSS Simplificado:**
 ```css
-.alert-red { background: #dc3545; color: white; }
-.alert-orange { background: #fd7e14; color: #212529; }
-.alert-yellow { background: #ffc107; color: #212529; }
-```
-
-**TypeScript Interface:**
-```typescript
-interface AlertaVacunacion {
-  id: string;
-  mascota_nombre: string;
-  vacuna_nombre: string;
-  estado: 'vencida' | 'critica' | 'proxima';
-  color: 'red' | 'orange' | 'yellow';
-  dias_restantes: number;
-  prioridad: 'alta' | 'media';
-  responsable_nombre: string;
-  responsable_telefono: string;
+/* Solo necesitas estos 2 estilos */
+.alert-red {
+  background: #dc3545;
+  color: white;
 }
+.alert-yellow {
+  background: #ffc107;
+  color: #212529;
+}
+/* ❌ REMOVER: alert-orange, alert-purple */
 ```
 
-### ✅ **Testing Completado:**
-- **Alertas por Color:** ✅ Rojo (vencida), Naranja (crítica), Amarillo (próxima)
-- **Limpieza Automática:** ✅ Alertas >7 días eliminadas automáticamente
-- **Estados:** ✅ Transición aplicada → vencida → completado
-- **Dashboard:** ✅ Estadísticas en tiempo real 
-- **Performance:** ✅ Consultas optimizadas con select_related()
+**TypeScript Interface Simplificada:**
+```typescript
+interface EstadisticasAlertas {
+  total_alertas: number;
+  vencidas: number;                    // Solo esto
+  proximas: number;                    // Solo esto
+  mascotas_requieren_atencion: number;
+  fecha_consulta: string;
+  // ❌ REMOVER: vencidas_reinicio, criticas
+}
 
-### 🚀 **Resultado Final:**
-**SISTEMA DE ALERTAS DE VACUNACIÓN 100% FUNCIONAL**
-- Dashboard con código de colores ✅
-- Limpieza automática ✅
-- Estados inteligentes ✅
-- Integración frontend-ready ✅
-- Sistema de historial médico preservado ✅
+interface AlertaVacunacion {
+  estado: 'vencida' | 'proxima';       // Solo 2 estados
+  color: 'red' | 'yellow';             // Solo 2 colores
+  dias_restantes: number;              // -180 a +30 rango
+  // Resto de campos igual...
+}
+### 🎯 **Casos de Uso Resueltos:**
+
+**✅ Caso Problemático Solucionado:**
+- **brayanhipolitogay (235 días vencida)**: Excluida automáticamente (muy antigua)
+- **pendejerete02 (6 días vencida)**: Incluida como "vencida" ✅
+
+**✅ Beneficios del Rediseño:**
+- **Datos útiles únicamente:** Solo alertas que requieren acción real
+- **Performance mejorada:** Sin consultas de casos irrelevantes
+- **UX simplificada:** Solo 2 colores, 2 estados, fácil de entender
+- **Consistencia matemática:** Contadores siempre exactos
+
+### ✅ **Testing Final Completado:**
+- **Contadores exactos:** ✅ 6 + 63 = 69 total (100% consistente)
+- **Filtrado correcto:** ✅ Excluye casos >180 días vencidos
+- **Estados simples:** ✅ Solo vencida/próxima (sin complejidad)
+- **Performance:** ✅ Consultas optimizadas para rango útil
+- **Frontend ready:** ✅ Interface TypeScript simplificada
+
+### 🚀 **Sistema de Alertas v2.0 - Resultado Final:**
+**SISTEMA COMPLETAMENTE REDISEÑADO Y SIMPLIFICADO**
+- ✅ Solo alertas útiles y accionables
+- ✅ Contadores matemáticamente consistentes
+- ✅ Interface simple para frontend (2 estados, 2 colores)
+- ✅ Performance optimizada (filtrado inteligente)
+- ✅ UX mejorada (sin información irrelevante)
 
 ---
 
