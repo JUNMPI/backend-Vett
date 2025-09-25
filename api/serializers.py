@@ -267,10 +267,32 @@ class TipoDocumentoSerializer(serializers.ModelSerializer):
 # Serializador para el modelo Servicio
 class ServicioSerializer(serializers.ModelSerializer):
     estado = serializers.ChoiceField(choices=Estado.ESTADO_CHOICES, required=False, default=Estado.ACTIVO)
+    categoria_display = serializers.CharField(source='get_categoria_display_custom', read_only=True)
+    duracion_total = serializers.SerializerMethodField()
+    permite_adicionales = serializers.SerializerMethodField()
+    precio_fijo = serializers.SerializerMethodField()
 
     class Meta:
         model = Servicio
-        fields = ['id', 'nombre', 'precio', 'estado']
+        fields = [
+            'id', 'nombre', 'precio', 'estado', 'descripcion',
+            'duracion_minutos', 'tiempo_preparacion', 'tiempo_limpieza',
+            'prioridad', 'color', 'categoria', 'categoria_display',
+            'duracion_total', 'permite_adicionales', 'precio_fijo',
+            'requiere_consultorio_especial', 'permite_overlap'
+        ]
+
+    def get_duracion_total(self, obj):
+        """Duración total incluyendo preparación y limpieza"""
+        return obj.duracion_total_minutos()
+
+    def get_permite_adicionales(self, obj):
+        """Si este servicio permite agregar servicios/productos adicionales"""
+        return obj.permite_servicios_adicionales()
+
+    def get_precio_fijo(self, obj):
+        """Si este servicio tiene precio fijo"""
+        return obj.es_precio_fijo()
 
 class ProductoSerializer(serializers.ModelSerializer):
     estado = serializers.ChoiceField(choices=Estado.ESTADO_CHOICES, required=False, default=Estado.ACTIVO)
@@ -510,3 +532,250 @@ class VacunasAlertaSerializer(serializers.Serializer):
     estado = serializers.CharField()
     responsable_nombre = serializers.CharField()
     responsable_telefono = serializers.CharField()
+
+
+# 🚀 SERIALIZERS PARA SISTEMA PROFESIONAL DE CITAS
+
+
+
+class HorarioTrabajoSerializer(serializers.ModelSerializer):
+    """
+    Serializer para horarios de trabajo de veterinarios
+    """
+    veterinario_nombre = serializers.CharField(source='veterinario.__str__', read_only=True)
+    dia_display = serializers.CharField(source='get_dia_semana_display', read_only=True)
+    duracion_jornada = serializers.SerializerMethodField(read_only=True)
+
+    class Meta:
+        model = HorarioTrabajo
+        fields = [
+            'id', 'veterinario', 'veterinario_nombre', 'dia_semana', 'dia_display',
+            'hora_inicio', 'hora_fin', 'hora_inicio_descanso', 'hora_fin_descanso',
+            'duracion_jornada', 'activo'
+        ]
+        read_only_fields = ['id']
+
+    def get_duracion_jornada(self, obj):
+        """Calcula la duración total de la jornada en horas"""
+        from datetime import datetime, timedelta
+
+        # Duración total del día
+        inicio = datetime.combine(datetime.today(), obj.hora_inicio)
+        fin = datetime.combine(datetime.today(), obj.hora_fin)
+        duracion_total = (fin - inicio).total_seconds() / 3600
+
+        # Restar descanso si existe
+        if obj.hora_inicio_descanso and obj.hora_fin_descanso:
+            descanso_inicio = datetime.combine(datetime.today(), obj.hora_inicio_descanso)
+            descanso_fin = datetime.combine(datetime.today(), obj.hora_fin_descanso)
+            duracion_descanso = (descanso_fin - descanso_inicio).total_seconds() / 3600
+            duracion_total -= duracion_descanso
+
+        return round(duracion_total, 2)
+
+    def validate(self, data):
+        """Validaciones personalizadas"""
+        if data.get('hora_inicio') and data.get('hora_fin'):
+            if data['hora_inicio'] >= data['hora_fin']:
+                raise serializers.ValidationError({
+                    'hora_fin': 'La hora de fin debe ser posterior a la hora de inicio'
+                })
+
+        # Validar horario de descanso
+        if data.get('hora_inicio_descanso') and data.get('hora_fin_descanso'):
+            if data['hora_inicio_descanso'] >= data['hora_fin_descanso']:
+                raise serializers.ValidationError({
+                    'hora_fin_descanso': 'La hora de fin del descanso debe ser posterior al inicio'
+                })
+
+            # El descanso debe estar dentro del horario laboral
+            if (data['hora_inicio_descanso'] < data.get('hora_inicio', data['hora_inicio_descanso']) or
+                data['hora_fin_descanso'] > data.get('hora_fin', data['hora_fin_descanso'])):
+                raise serializers.ValidationError({
+                    'hora_inicio_descanso': 'El descanso debe estar dentro del horario laboral'
+                })
+
+        return data
+
+
+class SlotTiempoSerializer(serializers.ModelSerializer):
+    """
+    Serializer para slots de tiempo
+    """
+    veterinario_nombre = serializers.CharField(source='veterinario.__str__', read_only=True)
+    disponible = serializers.BooleanField(read_only=True)
+    cita_info = serializers.SerializerMethodField(read_only=True)
+
+    class Meta:
+        model = SlotTiempo
+        fields = [
+            'id', 'veterinario', 'veterinario_nombre', 'fecha', 'hora_inicio', 'hora_fin',
+            'disponible', 'cita_info', 'bloqueado', 'razon_bloqueo'
+        ]
+        read_only_fields = ['id']
+
+    def get_cita_info(self, obj):
+        """Información de la cita si el slot está ocupado"""
+        if not obj.disponible and hasattr(obj, 'citas') and obj.citas.exists():
+            cita = obj.citas.first()
+            return {
+                'id': cita.id,
+                'mascota': cita.mascota.nombreMascota,
+                'servicio': cita.servicio.nombre,
+                'estado': cita.estado
+            }
+        return None
+
+
+class CitaProfesionalSerializer(serializers.ModelSerializer):
+    """
+    Serializer extendido para citas con funcionalidades profesionales
+    """
+    mascota_nombre = serializers.CharField(source='mascota.nombreMascota', read_only=True)
+    veterinario_nombre = serializers.CharField(source='veterinario.__str__', read_only=True)
+    servicio_nombre = serializers.CharField(source='servicio.nombre', read_only=True)
+    tipo_cita_nombre = serializers.CharField(source='tipo_cita.nombre', read_only=True)
+    estado_display = serializers.CharField(source='get_estado_display', read_only=True)
+
+    # Campos calculados
+    duracion_estimada = serializers.SerializerMethodField(read_only=True)
+    tiempo_transcurrido = serializers.SerializerMethodField(read_only=True)
+
+    class Meta:
+        model = Cita
+        fields = [
+            'id', 'fecha', 'hora', 'mascota', 'mascota_nombre',
+            'veterinario', 'veterinario_nombre', 'servicio', 'servicio_nombre',
+            'estado', 'estado_display', 'notas'
+        ]
+        read_only_fields = ['id']
+
+    def get_duracion_estimada(self, obj):
+        """Duración estimada basada en el tipo de cita"""
+        if hasattr(obj, 'tipo_cita') and obj.tipo_cita:
+            return obj.tipo_cita.duracion_minutos
+        return None
+
+    def get_tiempo_transcurrido(self, obj):
+        """Tiempo transcurrido desde la creación de la cita"""
+        if hasattr(obj, 'fecha_creacion') and obj.fecha_creacion:
+            from django.utils import timezone
+            delta = timezone.now() - obj.fecha_creacion
+            return delta.days
+        return None
+
+
+# 🛒 SERIALIZERS PARA SERVICIOS CATEGORIZADOS
+
+class ServicioAdicionalSerializer(serializers.ModelSerializer):
+    """
+    Serializer para servicios/productos adicionales agregados a una cita
+    """
+    servicio_nombre = serializers.CharField(source='servicio.nombre', read_only=True)
+    producto_nombre = serializers.CharField(source='producto.nombre', read_only=True)
+    tipo_item = serializers.SerializerMethodField(read_only=True)
+
+    class Meta:
+        model = ServicioAdicional
+        fields = [
+            'id', 'cita', 'servicio', 'servicio_nombre',
+            'producto', 'producto_nombre', 'tipo_item',
+            'cantidad', 'precio_unitario', 'subtotal', 'notas', 'creado'
+        ]
+        read_only_fields = ['id', 'subtotal', 'creado']
+
+    def get_tipo_item(self, obj):
+        """Identifica si es un servicio o producto"""
+        if obj.servicio:
+            return 'servicio'
+        elif obj.producto:
+            return 'producto'
+        return 'desconocido'
+
+
+class DetalleCompletarCitaSerializer(serializers.ModelSerializer):
+    """
+    Serializer para detalles de completar cita específicos por categoría
+    """
+    categoria = serializers.CharField(source='cita.servicio.categoria', read_only=True)
+    servicio_nombre = serializers.CharField(source='cita.servicio.nombre', read_only=True)
+    mascota_nombre = serializers.CharField(source='cita.mascota.nombreMascota', read_only=True)
+    veterinario_nombre = serializers.CharField(source='completado_por.__str__', read_only=True)
+    servicios_adicionales = ServicioAdicionalSerializer(source='cita.servicios_adicionales', many=True, read_only=True)
+
+    class Meta:
+        model = DetalleCompletarCita
+        fields = [
+            'id', 'cita', 'categoria', 'servicio_nombre', 'mascota_nombre',
+            # Campos específicos por categoría
+            'indicaciones_bañado', 'tipo_pelaje', 'productos_especiales',
+            'diagnostico', 'tratamiento_recomendado', 'observaciones_medicas',
+            'proxima_cita_sugerida', 'observaciones_vacunacion',
+            # Totales
+            'subtotal_servicios', 'subtotal_productos', 'total_final',
+            # Control
+            'completado', 'completado_en', 'completado_por', 'veterinario_nombre',
+            # Relaciones
+            'servicios_adicionales',
+            # Metadatos
+            'creado', 'actualizado'
+        ]
+        read_only_fields = ['id', 'creado', 'actualizado']
+
+    def validate(self, data):
+        """Validación específica según categoría del servicio"""
+        cita = data.get('cita')
+        if cita:
+            categoria = cita.servicio.categoria
+
+            # Validaciones específicas por categoría
+            if categoria == 'BAÑADO':
+                if not data.get('tipo_pelaje'):
+                    raise serializers.ValidationError({
+                        'tipo_pelaje': 'El tipo de pelaje es requerido para servicios de baño.'
+                    })
+
+            elif categoria == 'CONSULTA':
+                if not data.get('diagnostico'):
+                    raise serializers.ValidationError({
+                        'diagnostico': 'El diagnóstico es requerido para consultas médicas.'
+                    })
+
+        return data
+
+
+# 🔄 SERIALIZER EXTENDIDO PARA CITAS
+
+class CitaExtendidaSerializer(serializers.ModelSerializer):
+    """
+    Serializer extendido para citas con información de categorización
+    """
+    mascota_nombre = serializers.CharField(source='mascota.nombreMascota', read_only=True)
+    veterinario_nombre = serializers.CharField(source='veterinario.__str__', read_only=True)
+    servicio_info = ServicioSerializer(source='servicio', read_only=True)
+    detalle = DetalleCompletarCitaSerializer(read_only=True)
+    servicios_adicionales = ServicioAdicionalSerializer(many=True, read_only=True)
+
+    # Campos calculados
+    total_estimado = serializers.SerializerMethodField()
+    puede_completar = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Cita
+        fields = [
+            'id', 'fecha', 'hora', 'mascota', 'mascota_nombre',
+            'veterinario', 'veterinario_nombre', 'servicio', 'servicio_info',
+            'estado', 'notas', 'detalle', 'servicios_adicionales',
+            'total_estimado', 'puede_completar'
+        ]
+
+    def get_total_estimado(self, obj):
+        """Calcula el total estimado incluyendo servicios adicionales"""
+        total = obj.servicio.precio
+        if hasattr(obj, 'servicios_adicionales'):
+            total += sum(item.subtotal for item in obj.servicios_adicionales.all())
+        return total
+
+    def get_puede_completar(self, obj):
+        """Determina si la cita puede ser completada"""
+        return obj.estado in ['PENDIENTE', 'EN_PROCESO']

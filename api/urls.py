@@ -15,6 +15,12 @@ router.register(r'trabajadores', TrabajadorViewSet)
 router.register(r'veterinarios', VeterinarioViewSet)
 router.register(r'servicios', ServicioViewSet)
 router.register(r'citas', CitaViewSet)
+
+# 🚀 URLs del sistema profesional de citas
+router.register(r'horarios-trabajo', HorarioTrabajoViewSet)
+router.register(r'slots-tiempo', SlotTiempoViewSet)
+router.register(r'citas-profesional', CitaProfesionalViewSet, basename='cita-profesional')
+
 # URLs del sistema de vacunación
 router.register(r'vacunas', VacunaViewSet)
 router.register(r'historial-vacunacion', HistorialVacunacionViewSet)

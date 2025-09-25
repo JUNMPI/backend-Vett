@@ -23,7 +23,9 @@ import traceback
 from .models import (
     Especialidad, Consultorio, TipoDocumento, Trabajador, Veterinario,
     Servicio, Producto, Mascota, Responsable, Cita, Usuario, DiaTrabajo,
-    EstadoCita, Vacuna, HistorialVacunacion, HistorialMedico
+    EstadoCita, Vacuna, HistorialVacunacion, HistorialMedico,
+    # 🚀 Nuevos modelos profesionales
+    HorarioTrabajo, SlotTiempo
 )
 
 # Imports específicos de serializers
@@ -32,7 +34,9 @@ from .serializers import (
     TrabajadorSerializer, VeterinarioSerializer, ServicioSerializer,
     ProductoSerializer, MascotaSerializer, ResponsableSerializer,
     CitaSerializer, CustomTokenObtainPairSerializer, VacunaSerializer,
-    HistorialVacunacionSerializer, HistorialMedicoSerializer, VacunasAlertaSerializer
+    HistorialVacunacionSerializer, HistorialMedicoSerializer, VacunasAlertaSerializer,
+    # 🚀 Nuevos serializers profesionales
+    HorarioTrabajoSerializer, SlotTiempoSerializer, CitaProfesionalSerializer
 )
 
 # ViewSet for Especialidad
@@ -280,9 +284,21 @@ class ServicioViewSet(viewsets.ModelViewSet):
     queryset = Servicio.objects.all()
     serializer_class = ServicioSerializer
 
-    # Filtra servicios activos por defecto
+    # Filtra servicios activos por defecto y permite filtrar por categoría
     def get_queryset(self):
-        return Servicio.objects.all()
+        queryset = Servicio.objects.all()
+
+        # Filtro por categoría
+        categoria = self.request.query_params.get('categoria')
+        if categoria:
+            queryset = queryset.filter(categoria=categoria)
+
+        # Filtro por estado
+        estado = self.request.query_params.get('estado')
+        if estado:
+            queryset = queryset.filter(estado=estado)
+
+        return queryset
 
     # Desactiva un servicio (cambia su estado a INACTIVO)
     @action(detail=True, methods=['patch'])
@@ -565,6 +581,176 @@ class CitaViewSet(viewsets.ModelViewSet):
         citas_vet = Cita.objects.filter(veterinario__id=veterinario_id)
         serializer = self.get_serializer(citas_vet, many=True)
         return Response(serializer.data)
+
+    # 🛒 NUEVOS ENDPOINTS PARA SERVICIOS CATEGORIZADOS
+
+    @action(detail=True, methods=['get'], url_path='modal-completar')
+    def modal_completar(self, request, pk=None):
+        """
+        GET /api/citas/{id}/modal-completar/
+        Obtiene la estructura del modal para completar cita según categoría
+        """
+        cita = self.get_object()
+        categoria = cita.servicio.categoria
+
+        # Estructura base de respuesta
+        response_data = {
+            'cita_id': cita.id,
+            'categoria': categoria,
+            'servicio_nombre': cita.servicio.nombre,
+            'mascota_nombre': cita.mascota.nombreMascota,
+            'precio_base': cita.servicio.precio,
+            'permite_adicionales': cita.servicio.permite_servicios_adicionales(),
+            'precio_fijo': cita.servicio.es_precio_fijo()
+        }
+
+        # Agregar campos específicos según categoría
+        if categoria == 'CONSULTA':
+            response_data.update({
+                'servicios_disponibles': ServicioSerializer(
+                    Servicio.objects.filter(categoria__in=['CONSULTA', 'CIRUGIA'], estado='Activo').exclude(id=cita.servicio.id),
+                    many=True
+                ).data,
+                'productos_disponibles': ProductoSerializer(
+                    Producto.objects.filter(estado='Activo'),
+                    many=True
+                ).data
+            })
+        elif categoria == 'BAÑADO':
+            response_data.update({
+                'tipos_pelaje': [
+                    'Corto', 'Mediano', 'Largo', 'Rizado', 'Doble capa'
+                ]
+            })
+        elif categoria == 'VACUNACION':
+            from datetime import datetime, timedelta
+            response_data.update({
+                'vacunas_disponibles': VacunaSerializer(
+                    Vacuna.objects.filter(estado='Activo'),
+                    many=True
+                ).data,
+                'proxima_cita_sugerida': (datetime.now() + timedelta(days=30)).date()
+            })
+
+        return Response(response_data)
+
+    @action(detail=True, methods=['post'], url_path='completar')
+    def completar_cita(self, request, pk=None):
+        """
+        POST /api/citas/{id}/completar/
+        Completa la cita con información específica según categoría
+        """
+        cita = self.get_object()
+        data = request.data.copy()
+        data['cita'] = cita.id
+
+        try:
+            with transaction.atomic():
+                # Crear o actualizar el detalle de la cita
+                detalle, created = DetalleCompletarCita.objects.get_or_create(
+                    cita=cita,
+                    defaults=data
+                )
+
+                if not created:
+                    # Actualizar detalle existente
+                    serializer = DetalleCompletarCitaSerializer(detalle, data=data, partial=True)
+                else:
+                    # Nuevo detalle
+                    serializer = DetalleCompletarCitaSerializer(detalle, data=data, partial=True)
+
+                if serializer.is_valid():
+                    detalle = serializer.save()
+                    detalle.completado = True
+                    detalle.completado_en = timezone.now()
+
+                    # Asignar veterinario si está disponible
+                    veterinario_id = request.data.get('veterinario_id')
+                    if veterinario_id:
+                        try:
+                            veterinario = Veterinario.objects.get(id=veterinario_id)
+                            detalle.completado_por = veterinario
+                        except Veterinario.DoesNotExist:
+                            pass
+
+                    detalle.save()
+
+                    # Calcular totales
+                    detalle.calcular_totales()
+
+                    # Cambiar estado de la cita
+                    cita.estado = 'COMPLETADA'
+                    cita.save()
+
+                    return Response({
+                        'mensaje': 'Cita completada exitosamente',
+                        'detalle': DetalleCompletarCitaSerializer(detalle).data
+                    }, status=status.HTTP_200_OK)
+                else:
+                    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        except Exception as e:
+            return Response({
+                'error': f'Error al completar la cita: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=True, methods=['post'], url_path='agregar-servicio')
+    def agregar_servicio(self, request, pk=None):
+        """
+        POST /api/citas/{id}/agregar-servicio/
+        Agrega un servicio o producto adicional a la cita
+        """
+        cita = self.get_object()
+
+        if not cita.servicio.permite_servicios_adicionales():
+            return Response({
+                'error': 'Este tipo de servicio no permite agregar servicios adicionales'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        data = request.data.copy()
+        data['cita'] = cita.id
+
+        serializer = ServicioAdicionalSerializer(data=data)
+        if serializer.is_valid():
+            servicio_adicional = serializer.save()
+
+            # Actualizar totales del detalle si existe
+            if hasattr(cita, 'detalle'):
+                cita.detalle.calcular_totales()
+
+            return Response({
+                'mensaje': 'Servicio adicional agregado exitosamente',
+                'servicio_adicional': ServicioAdicionalSerializer(servicio_adicional).data
+            }, status=status.HTTP_201_CREATED)
+        else:
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['get'], url_path='resumen-total')
+    def resumen_total(self, request, pk=None):
+        """
+        GET /api/citas/{id}/resumen-total/
+        Obtiene resumen de totales calculados
+        """
+        cita = self.get_object()
+
+        precio_base = cita.servicio.precio
+        servicios_adicionales = cita.servicios_adicionales.all()
+
+        subtotal_servicios = sum([
+            item.subtotal for item in servicios_adicionales if item.servicio
+        ])
+        subtotal_productos = sum([
+            item.subtotal for item in servicios_adicionales if item.producto
+        ])
+        total_final = precio_base + subtotal_servicios + subtotal_productos
+
+        return Response({
+            'precio_base': precio_base,
+            'subtotal_servicios': subtotal_servicios,
+            'subtotal_productos': subtotal_productos,
+            'total_final': total_final,
+            'servicios_adicionales': ServicioAdicionalSerializer(servicios_adicionales, many=True).data
+        })
 
 
 class LoginView(TokenObtainPairView):
@@ -2120,5 +2306,353 @@ class HistorialMedicoViewSet(viewsets.ModelViewSet):
         }
         
         return Response(resumen)
+
+
+# 🚀 VIEWSETS PROFESIONALES PARA SISTEMA DE CITAS
+
+
+
+class HorarioTrabajoViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet para gestión de horarios de trabajo de veterinarios
+    """
+    queryset = HorarioTrabajo.objects.all()
+    serializer_class = HorarioTrabajoSerializer
+    filterset_fields = ['veterinario', 'dia_semana', 'activo']
+    ordering_fields = ['veterinario', 'dia_semana', 'hora_inicio']
+    ordering = ['veterinario', 'dia_semana']
+
+    def get_queryset(self):
+        """Optimizar consultas con select_related"""
+        return super().get_queryset().select_related(
+            'veterinario__trabajador'
+        )
+
+    @action(detail=False, methods=['get'], url_path='veterinario/(?P<veterinario_id>[^/.]+)')
+    def horarios_veterinario(self, request, veterinario_id=None):
+        """Obtener horarios de un veterinario específico"""
+        horarios = self.get_queryset().filter(
+            veterinario__id=veterinario_id,
+            activo=True
+        ).order_by('dia_semana')
+
+        serializer = self.get_serializer(horarios, many=True)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=['get'])
+    def disponibilidad_semana(self, request):
+        """
+        Obtener disponibilidad de todos los veterinarios para la semana
+        """
+        from datetime import date, timedelta
+
+        veterinario_id = request.query_params.get('veterinario')
+        fecha_inicio = request.query_params.get('fecha_inicio')
+
+        # Calcular semana actual si no se especifica
+        if not fecha_inicio:
+            hoy = date.today()
+            inicio_semana = hoy - timedelta(days=hoy.weekday())
+            fecha_inicio = inicio_semana.strftime('%Y-%m-%d')
+
+        queryset = self.get_queryset().filter(activo=True)
+        if veterinario_id:
+            queryset = queryset.filter(veterinario__id=veterinario_id)
+
+        # Mapear días de la semana
+        dias_map = {
+            0: 'LUNES', 1: 'MARTES', 2: 'MIERCOLES', 3: 'JUEVES',
+            4: 'VIERNES', 5: 'SABADO', 6: 'DOMINGO'
+        }
+
+        # Crear estructura de respuesta
+        disponibilidad = {}
+        for horario in queryset:
+            vet_id = str(horario.veterinario.id)
+            if vet_id not in disponibilidad:
+                disponibilidad[vet_id] = {
+                    'veterinario': horario.veterinario.__str__(),
+                    'dias': {}
+                }
+
+            disponibilidad[vet_id]['dias'][horario.dia_semana] = {
+                'hora_inicio': horario.hora_inicio.strftime('%H:%M'),
+                'hora_fin': horario.hora_fin.strftime('%H:%M'),
+                'descanso_inicio': horario.hora_inicio_descanso.strftime('%H:%M') if horario.hora_inicio_descanso else None,
+                'descanso_fin': horario.hora_fin_descanso.strftime('%H:%M') if horario.hora_fin_descanso else None,
+                'duracion_jornada': HorarioTrabajoSerializer().get_duracion_jornada(horario)
+            }
+
+        return Response({
+            'fecha_inicio': fecha_inicio,
+            'disponibilidad': disponibilidad
+        })
+
+
+class SlotTiempoViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet para gestión de slots de tiempo
+    Principalmente para consulta y generación automática
+    """
+    queryset = SlotTiempo.objects.all()
+    serializer_class = SlotTiempoSerializer
+    filterset_fields = ['veterinario', 'fecha', 'disponible', 'bloqueado']
+    ordering_fields = ['fecha', 'hora_inicio', 'veterinario']
+    ordering = ['fecha', 'hora_inicio']
+
+    def get_queryset(self):
+        """Optimizar consultas y filtros"""
+        queryset = super().get_queryset().select_related(
+            'veterinario__trabajador'
+        ).prefetch_related('citas')
+
+        # Filtros por fecha
+        fecha_desde = self.request.query_params.get('fecha_desde')
+        fecha_hasta = self.request.query_params.get('fecha_hasta')
+
+        if fecha_desde:
+            queryset = queryset.filter(fecha__gte=fecha_desde)
+        if fecha_hasta:
+            queryset = queryset.filter(fecha__lte=fecha_hasta)
+
+        return queryset
+
+    @action(detail=False, methods=['post'])
+    def generar_slots(self, request):
+        """
+        Generar slots automáticamente basado en horarios de trabajo
+        """
+        from datetime import date, timedelta, datetime, time
+
+        data = request.data
+        veterinario_id = data.get('veterinario_id')
+        fecha_inicio = data.get('fecha_inicio')
+        fecha_fin = data.get('fecha_fin')
+        duracion_slot = int(data.get('duracion_slot_minutos', 30))
+
+        if not all([veterinario_id, fecha_inicio, fecha_fin]):
+            return Response({
+                'error': 'veterinario_id, fecha_inicio y fecha_fin son requeridos'
+            }, status=400)
+
+        try:
+            veterinario = Veterinario.objects.get(id=veterinario_id)
+            fecha_inicio = datetime.strptime(fecha_inicio, '%Y-%m-%d').date()
+            fecha_fin = datetime.strptime(fecha_fin, '%Y-%m-%d').date()
+        except (Veterinario.DoesNotExist, ValueError) as e:
+            return Response({'error': str(e)}, status=400)
+
+        slots_creados = 0
+        fecha_actual = fecha_inicio
+
+        # Mapear días de la semana
+        dias_semana = ['LUNES', 'MARTES', 'MIERCOLES', 'JUEVES', 'VIERNES', 'SABADO', 'DOMINGO']
+
+        while fecha_actual <= fecha_fin:
+            dia_semana = dias_semana[fecha_actual.weekday()]
+
+            # Buscar horario de trabajo para este día
+            horario = HorarioTrabajo.objects.filter(
+                veterinario=veterinario,
+                dia_semana=dia_semana,
+                activo=True
+            ).first()
+
+            if horario:
+                # Generar slots para este día
+                hora_actual = datetime.combine(fecha_actual, horario.hora_inicio)
+                hora_fin_dia = datetime.combine(fecha_actual, horario.hora_fin)
+
+                while hora_actual < hora_fin_dia:
+                    hora_fin_slot = hora_actual + timedelta(minutes=duracion_slot)
+
+                    # Verificar si no existe ya este slot
+                    if not SlotTiempo.objects.filter(
+                        veterinario=veterinario,
+                        fecha=fecha_actual,
+                        hora_inicio=hora_actual.time(),
+                        hora_fin=hora_fin_slot.time()
+                    ).exists():
+
+                        # Verificar que no coincida con horario de descanso
+                        en_descanso = False
+                        if horario.hora_inicio_descanso and horario.hora_fin_descanso:
+                            if (hora_actual.time() >= horario.hora_inicio_descanso and
+                                hora_actual.time() < horario.hora_fin_descanso):
+                                en_descanso = True
+
+                        if not en_descanso:
+                            SlotTiempo.objects.create(
+                                veterinario=veterinario,
+                                fecha=fecha_actual,
+                                hora_inicio=hora_actual.time(),
+                                hora_fin=hora_fin_slot.time()
+                            )
+                            slots_creados += 1
+
+                    hora_actual = hora_fin_slot
+
+            fecha_actual += timedelta(days=1)
+
+        return Response({
+            'mensaje': f'Se crearon {slots_creados} slots para el veterinario {veterinario}',
+            'slots_creados': slots_creados,
+            'periodo': f'{fecha_inicio} a {fecha_fin}'
+        })
+
+    @action(detail=False, methods=['get'])
+    def disponibles(self, request):
+        """
+        Obtener solo slots disponibles con filtros
+        """
+        queryset = self.get_queryset().filter(
+            disponible=True,
+            bloqueado=False
+        )
+
+        # Filtro por veterinario
+        veterinario_id = request.query_params.get('veterinario')
+        if veterinario_id:
+            queryset = queryset.filter(veterinario__id=veterinario_id)
+
+        # Solo fechas futuras
+        solo_futuro = request.query_params.get('solo_futuro', 'true')
+        if solo_futuro.lower() == 'true':
+            from datetime import date
+            queryset = queryset.filter(fecha__gte=date.today())
+
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+
+
+class CitaProfesionalViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet extendido para gestión profesional de citas
+    Incluye funcionalidades avanzadas como conflictos, recordatorios, etc.
+    """
+    queryset = Cita.objects.all()
+    serializer_class = CitaProfesionalSerializer
+    filterset_fields = ['veterinario', 'estado', 'fecha']
+    ordering_fields = ['fecha', 'hora', 'fecha_creacion']
+    ordering = ['fecha', 'hora']
+
+    def get_queryset(self):
+        """Optimizar consultas"""
+        return super().get_queryset().select_related(
+            'mascota', 'veterinario__trabajador', 'servicio'
+        )
+
+    @action(detail=False, methods=['get'])
+    def agenda_dia(self, request):
+        """
+        Obtener agenda completa de un día específico
+        """
+        fecha = request.query_params.get('fecha')
+        veterinario_id = request.query_params.get('veterinario')
+
+        if not fecha:
+            from datetime import date
+            fecha = date.today().strftime('%Y-%m-%d')
+
+        queryset = self.get_queryset().filter(fecha=fecha)
+        if veterinario_id:
+            queryset = queryset.filter(veterinario__id=veterinario_id)
+
+        # Organizar por veterinario
+        agenda = {}
+        for cita in queryset.order_by('veterinario', 'hora'):
+            vet_key = str(cita.veterinario.id)
+            if vet_key not in agenda:
+                agenda[vet_key] = {
+                    'veterinario': cita.veterinario.__str__(),
+                    'citas': []
+                }
+
+            serializer = self.get_serializer(cita)
+            agenda[vet_key]['citas'].append(serializer.data)
+
+        return Response({
+            'fecha': fecha,
+            'agenda': agenda,
+            'total_citas': queryset.count()
+        })
+
+    @action(detail=False, methods=['post'])
+    def verificar_conflictos(self, request):
+        """
+        Verificar conflictos de horario antes de crear una cita
+        """
+        data = request.data
+        veterinario_id = data.get('veterinario')
+        fecha = data.get('fecha')
+        hora = data.get('hora')
+        duracion = int(data.get('duracion_minutos', 30))
+
+        if not all([veterinario_id, fecha, hora]):
+            return Response({
+                'error': 'veterinario, fecha y hora son requeridos'
+            }, status=400)
+
+        from datetime import datetime, timedelta
+        try:
+            fecha_obj = datetime.strptime(fecha, '%Y-%m-%d').date()
+            hora_obj = datetime.strptime(hora, '%H:%M').time()
+            fecha_hora_inicio = datetime.combine(fecha_obj, hora_obj)
+            fecha_hora_fin = fecha_hora_inicio + timedelta(minutes=duracion)
+        except ValueError as e:
+            return Response({'error': f'Error en formato de fecha/hora: {e}'}, status=400)
+
+        # Buscar citas existentes que puedan generar conflicto
+        citas_conflicto = Cita.objects.filter(
+            veterinario__id=veterinario_id,
+            fecha=fecha_obj,
+            hora__range=(
+                (fecha_hora_inicio - timedelta(minutes=30)).time(),
+                (fecha_hora_fin + timedelta(minutes=30)).time()
+            )
+        ).exclude(estado='CANCELADA')
+
+        conflictos = []
+        for cita in citas_conflicto:
+            conflictos.append({
+                'id': cita.id,
+                'hora': cita.hora.strftime('%H:%M'),
+                'mascota': cita.mascota.nombreMascota,
+                'servicio': cita.servicio.nombre,
+                'estado': cita.estado
+            })
+
+        return Response({
+            'tiene_conflictos': len(conflictos) > 0,
+            'conflictos': conflictos,
+            'recomendaciones': self._generar_recomendaciones(veterinario_id, fecha_obj, hora_obj)
+        })
+
+    def _generar_recomendaciones(self, veterinario_id, fecha, hora_solicitada):
+        """Generar recomendaciones de horarios alternativos"""
+        from datetime import datetime, timedelta
+
+        # Buscar slots disponibles cercanos
+        slots_disponibles = SlotTiempo.objects.filter(
+            veterinario__id=veterinario_id,
+            fecha=fecha,
+            disponible=True,
+            bloqueado=False
+        ).order_by('hora_inicio')
+
+        recomendaciones = []
+        hora_solicitada_dt = datetime.combine(fecha, hora_solicitada)
+
+        for slot in slots_disponibles[:5]:  # Top 5 recomendaciones
+            slot_dt = datetime.combine(fecha, slot.hora_inicio)
+            diferencia = abs((slot_dt - hora_solicitada_dt).total_seconds() / 60)  # En minutos
+
+            recomendaciones.append({
+                'hora_inicio': slot.hora_inicio.strftime('%H:%M'),
+                'hora_fin': slot.hora_fin.strftime('%H:%M'),
+                'diferencia_minutos': int(diferencia)
+            })
+
+        return sorted(recomendaciones, key=lambda x: x['diferencia_minutos'])
 
 

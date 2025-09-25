@@ -4,6 +4,7 @@ from django.core.exceptions import ValidationError as CoreValidationError
 from django.core.validators import RegexValidator
 from .choices import *
 from django.contrib.auth.models import AbstractUser
+from django.utils import timezone
 import uuid
 from django.conf import settings
 import secrets
@@ -358,11 +359,97 @@ class Servicio(models.Model):
         default=Estado.ACTIVO,
     )
 
+    # 🚀 CAMPOS PROFESIONALES AGREGADOS
+    descripcion = models.TextField(blank=True, help_text="Descripción detallada del servicio")
+
+    # Configuración de tiempo
+    duracion_minutos = models.IntegerField(
+        default=30,
+        help_text="Duración estimada en minutos"
+    )
+    tiempo_preparacion = models.IntegerField(
+        default=5,
+        help_text="Tiempo previo necesario para preparar (minutos)"
+    )
+    tiempo_limpieza = models.IntegerField(
+        default=10,
+        help_text="Tiempo posterior necesario para limpieza (minutos)"
+    )
+
+    # Configuración de prioridad y gestión
+    prioridad = models.IntegerField(
+        default=2,
+        choices=[
+            (1, 'Baja'),
+            (2, 'Normal'),
+            (3, 'Alta'),
+            (4, 'Urgente'),
+            (5, 'Crítica/Emergencia')
+        ],
+        help_text="Nivel de prioridad del servicio"
+    )
+    color = models.CharField(
+        max_length=7,
+        default='#3498db',
+        help_text="Color hexadecimal para mostrar en calendario"
+    )
+
+    # Configuraciones adicionales
+    requiere_consultorio_especial = models.BooleanField(
+        default=False,
+        help_text="Si requiere un consultorio específico (cirugías, etc.)"
+    )
+    permite_overlap = models.BooleanField(
+        default=False,
+        help_text="Si permite solapamiento con otras citas"
+    )
+
+    # 🎯 CATEGORIZACIÓN DE SERVICIOS
+    CATEGORIA_CHOICES = [
+        ('CONSULTA', 'Consulta Médica'),
+        ('BAÑADO', 'Servicios de Baño'),
+        ('VACUNACION', 'Vacunación'),
+        ('CIRUGIA', 'Cirugía'),
+        ('EMERGENCIA', 'Emergencia'),
+    ]
+    categoria = models.CharField(
+        max_length=20,
+        choices=CATEGORIA_CHOICES,
+        default='CONSULTA',
+        help_text="Categoría del servicio para flujo específico"
+    )
+
+    # Metadata
+    creado = models.DateTimeField(auto_now_add=True, null=True, blank=True)
+    actualizado = models.DateTimeField(auto_now=True)
+
     class Meta:
         ordering = ['nombre']
+        verbose_name = 'Servicio'
+        verbose_name_plural = 'Servicios'
 
     def __str__(self):
-        return self.nombre
+        return f"{self.nombre} (${self.precio} - {self.duracion_minutos}min)"
+
+    def duracion_total_minutos(self):
+        """Duración total incluyendo preparación y limpieza"""
+        return self.duracion_minutos + self.tiempo_preparacion + self.tiempo_limpieza
+
+    def es_emergencia(self):
+        """Determina si es un servicio de emergencia"""
+        return self.prioridad >= 4
+
+    def get_categoria_display_custom(self):
+        """Obtiene el display name de la categoría"""
+        return dict(self.CATEGORIA_CHOICES).get(self.categoria, self.categoria)
+
+    def permite_servicios_adicionales(self):
+        """Determina si esta categoría permite agregar servicios adicionales"""
+        return self.categoria in ['CONSULTA', 'VACUNACION']
+
+    def es_precio_fijo(self):
+        """Determina si el servicio tiene precio fijo (sin servicios adicionales)"""
+        return self.categoria in ['BAÑADO']
 
 class Consultorio(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -415,11 +502,271 @@ class Cita(models.Model):
     )
     notas = models.TextField(blank=True, null=True)
 
+
     class Meta:
         ordering = ['fecha', 'hora']
 
     def __str__(self):
         return f"{self.fecha} {self.hora} — {self.mascota} ({self.get_estado_display()})"
+
+
+# 🛒 MODELOS PARA SERVICIOS CATEGORIZADOS
+
+class ServicioAdicional(models.Model):
+    """
+    Servicios/productos que se pueden agregar durante una cita
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    cita = models.ForeignKey(Cita, on_delete=models.CASCADE, related_name='servicios_adicionales')
+
+    # Puede ser un servicio o un producto del inventario
+    servicio = models.ForeignKey(Servicio, null=True, blank=True, on_delete=models.CASCADE)
+    producto = models.ForeignKey('Producto', null=True, blank=True, on_delete=models.CASCADE)
+
+    cantidad = models.IntegerField(default=1)
+    precio_unitario = models.DecimalField(max_digits=10, decimal_places=2)
+    subtotal = models.DecimalField(max_digits=10, decimal_places=2)
+    notas = models.TextField(blank=True)
+
+    creado = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Servicio Adicional'
+        verbose_name_plural = 'Servicios Adicionales'
+        ordering = ['-creado']
+
+    def save(self, *args, **kwargs):
+        """Calcula automáticamente el subtotal"""
+        self.subtotal = self.cantidad * self.precio_unitario
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        if self.servicio:
+            return f"{self.servicio.nombre} x{self.cantidad} = ${self.subtotal}"
+        elif self.producto:
+            return f"{self.producto.nombre} x{self.cantidad} = ${self.subtotal}"
+        return f"Item adicional x{self.cantidad} = ${self.subtotal}"
+
+
+class DetalleCompletarCita(models.Model):
+    """
+    Información específica al completar cada tipo de cita según su categoría
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    cita = models.OneToOneField(Cita, on_delete=models.CASCADE, related_name='detalle')
+
+    # Para BAÑADO
+    indicaciones_bañado = models.TextField(blank=True, help_text="Indicaciones especiales para el baño")
+    tipo_pelaje = models.CharField(max_length=50, blank=True, help_text="Tipo de pelaje de la mascota")
+    productos_especiales = models.TextField(blank=True, help_text="Productos especiales utilizados")
+
+    # Para CONSULTA
+    diagnostico = models.TextField(blank=True, help_text="Diagnóstico médico")
+    tratamiento_recomendado = models.TextField(blank=True, help_text="Tratamiento recomendado")
+    observaciones_medicas = models.TextField(blank=True, help_text="Observaciones médicas generales")
+
+    # Para VACUNACIÓN
+    proxima_cita_sugerida = models.DateField(null=True, blank=True, help_text="Próxima cita sugerida")
+    observaciones_vacunacion = models.TextField(blank=True, help_text="Observaciones sobre vacunación")
+
+    # Totales calculados
+    subtotal_servicios = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    subtotal_productos = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    total_final = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+
+    # Control de completado
+    completado = models.BooleanField(default=False)
+    completado_en = models.DateTimeField(null=True, blank=True)
+    completado_por = models.ForeignKey('Veterinario', null=True, blank=True, on_delete=models.SET_NULL)
+
+    # Metadatos
+    creado = models.DateTimeField(auto_now_add=True)
+    actualizado = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Detalle de Cita'
+        verbose_name_plural = 'Detalles de Citas'
+        ordering = ['-creado']
+
+    def calcular_totales(self):
+        """Calcula los totales basados en servicios adicionales"""
+        servicios_adicionales = self.cita.servicios_adicionales.all()
+
+        self.subtotal_servicios = sum([
+            item.subtotal for item in servicios_adicionales if item.servicio
+        ])
+
+        self.subtotal_productos = sum([
+            item.subtotal for item in servicios_adicionales if item.producto
+        ])
+
+        self.total_final = self.cita.servicio.precio + self.subtotal_servicios + self.subtotal_productos
+        self.save()
+
+    def __str__(self):
+        return f"Detalle cita {self.cita.id} - {self.cita.servicio.categoria}"
+
+
+# 🏥 SISTEMA DE CITAS PROFESIONAL - MODELOS AVANZADOS
+
+
+class HorarioTrabajo(models.Model):
+    """
+    Horarios de trabajo por veterinario para gestión inteligente de agenda
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    veterinario = models.ForeignKey(
+        'Veterinario',
+        on_delete=models.CASCADE,
+        related_name='horarios_trabajo'
+    )
+
+    # Configuración de días
+    DIAS_SEMANA = [
+        (0, 'Lunes'),
+        (1, 'Martes'),
+        (2, 'Miércoles'),
+        (3, 'Jueves'),
+        (4, 'Viernes'),
+        (5, 'Sábado'),
+        (6, 'Domingo'),
+    ]
+
+    dia_semana = models.IntegerField(
+        choices=DIAS_SEMANA,
+        help_text="Día de la semana (0=Lunes, 6=Domingo)"
+    )
+
+    # Horarios
+    hora_inicio = models.TimeField(help_text="Hora de inicio de jornada")
+    hora_fin = models.TimeField(help_text="Hora de fin de jornada")
+
+    # Configuración de descansos
+    tiene_descanso = models.BooleanField(
+        default=False,
+        help_text="¿Tiene descanso durante la jornada?"
+    )
+    hora_inicio_descanso = models.TimeField(
+        null=True,
+        blank=True,
+        help_text="Hora de inicio del descanso"
+    )
+    hora_fin_descanso = models.TimeField(
+        null=True,
+        blank=True,
+        help_text="Hora de fin del descanso"
+    )
+
+    # Control de actividad
+    activo = models.BooleanField(
+        default=True,
+        help_text="¿Este horario está actualmente activo?"
+    )
+    fecha_inicio_vigencia = models.DateField(
+        null=True,
+        blank=True,
+        help_text="Fecha desde la cual es válido este horario"
+    )
+    fecha_fin_vigencia = models.DateField(
+        null=True,
+        blank=True,
+        help_text="Fecha hasta la cual es válido este horario"
+    )
+
+    # Metadatos
+    creado = models.DateTimeField(auto_now_add=True)
+    actualizado = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ['veterinario', 'dia_semana']
+        ordering = ['veterinario', 'dia_semana']
+        verbose_name = 'Horario de Trabajo'
+        verbose_name_plural = 'Horarios de Trabajo'
+
+    def __str__(self):
+        return f"{self.veterinario} - {self.get_dia_semana_display()}: {self.hora_inicio}-{self.hora_fin}"
+
+
+class SlotTiempo(models.Model):
+    """
+    Slots de tiempo disponibles para gestión inteligente de citas
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    veterinario = models.ForeignKey(
+        'Veterinario',
+        on_delete=models.CASCADE,
+        related_name='slots_tiempo'
+    )
+    consultorio = models.ForeignKey(
+        'Consultorio',
+        on_delete=models.CASCADE,
+        related_name='slots_tiempo',
+        null=True,
+        blank=True
+    )
+
+    # Tiempo
+    fecha = models.DateField()
+    hora_inicio = models.TimeField()
+    hora_fin = models.TimeField()
+    duracion_minutos = models.IntegerField(help_text="Duración calculada en minutos")
+
+    # Disponibilidad
+    disponible = models.BooleanField(default=True)
+    motivo_no_disponible = models.CharField(
+        max_length=200,
+        blank=True,
+        choices=[
+            ('ocupado', 'Slot ocupado'),
+            ('descanso', 'Tiempo de descanso'),
+            ('mantenimiento', 'Mantenimiento de consultorio'),
+            ('emergencia', 'Reservado para emergencias'),
+            ('personal', 'Tiempo personal del veterinario'),
+            ('otro', 'Otro motivo'),
+        ]
+    )
+
+    # Configuración del slot
+    servicio_permitido = models.ForeignKey(
+        Servicio,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        help_text="Si se especifica, solo permite este tipo de servicio"
+    )
+
+    permite_emergencias = models.BooleanField(
+        default=True,
+        help_text="¿Este slot puede ser usado para emergencias?"
+    )
+
+    # Reserva temporal
+    reservado_hasta = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Tiempo límite de reserva temporal (para evitar doble booking)"
+    )
+
+    # Metadatos
+    generado_automaticamente = models.BooleanField(
+        default=True,
+        help_text="¿Este slot fue generado automáticamente?"
+    )
+    creado = models.DateTimeField(auto_now_add=True)
+    actualizado = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ['veterinario', 'consultorio', 'fecha', 'hora_inicio']
+        ordering = ['fecha', 'hora_inicio']
+        verbose_name = 'Slot de Tiempo'
+        verbose_name_plural = 'Slots de Tiempo'
+        indexes = [
+            models.Index(fields=['fecha', 'disponible']),
+            models.Index(fields=['veterinario', 'fecha']),
+        ]
+
+    def __str__(self):
+        return f"{self.fecha} {self.hora_inicio}-{self.hora_fin} - {self.veterinario} ({'Disponible' if self.disponible else 'No disponible'})"
 
 
 # 🐾 SISTEMA DE VACUNACIÓN - MODELOS PERÚ
