@@ -20,7 +20,10 @@
       "Bash(env_veterinariaScriptspython.exe manage.py makemigrations --name=\"mejorar_sistema_slots\")",
       "Bash(./env_veterinaria/Scripts/python.exe manage.py makemigrations --name=\"mejorar_sistema_slots\")",
       "Bash(./env_veterinaria/Scripts/python.exe manage.py migrate)",
-      "Bash(./env_veterinaria/Scripts/python.exe test_sistema_slots.py)"
+      "Bash(./env_veterinaria/Scripts/python.exe test_sistema_slots.py)",
+      "Bash(.env_veterinariaScriptspython.exe manage.py check)",
+      "Bash(./env_veterinaria/Scripts/python.exe manage.py check)",
+      "Bash(./env_veterinaria/Scripts/python.exe test_nuevos_endpoints.py)"
     ],
     "deny": [],
     "ask": []

@@ -682,7 +682,10 @@ class CitaViewSet(viewsets.ModelViewSet):
         PATCH /api/citas/{id}/reprogramar/
         Body: { "fecha": "YYYY-MM-DD", "hora": "HH:MM:SS" }
         Cambia la fecha y hora y marca estado como "reprogramada".
+        Libera el slot anterior y ocupa el nuevo slot.
         """
+        from datetime import datetime, timedelta
+
         cita = self.get_object()
         nueva_fecha = request.data.get('fecha')
         nueva_hora = request.data.get('hora')
@@ -693,11 +696,95 @@ class CitaViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        try:
+            nueva_fecha_obj = datetime.strptime(nueva_fecha, '%Y-%m-%d').date()
+            nueva_hora_obj = datetime.strptime(nueva_hora, '%H:%M' if ':' in nueva_hora and len(nueva_hora) == 5 else '%H:%M:%S').time()
+        except ValueError:
+            return Response({
+                'error': 'Formato de fecha u hora inválido',
+                'error_code': 'INVALID_DATE_FORMAT'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Guardar datos antiguos para liberar slot
+        fecha_anterior = cita.fecha
+        hora_anterior = cita.hora
+
+        # Calcular duración total del servicio
+        servicio = cita.servicio
+        duracion_total = servicio.duracion_total_minutos()
+
+        # Verificar conflictos con otras citas en el nuevo horario
+        hora_inicio_dt = datetime.combine(nueva_fecha_obj, nueva_hora_obj)
+        hora_fin_dt = hora_inicio_dt + timedelta(minutes=duracion_total)
+
+        citas_conflicto = Cita.objects.filter(
+            veterinario=cita.veterinario,
+            fecha=nueva_fecha_obj,
+            estado__in=['pendiente', 'confirmada', 'reprogramada']
+        ).exclude(
+            Q(hora__gte=hora_fin_dt.time()) | Q(hora__lt=nueva_hora_obj)
+        ).exclude(id=cita.id)  # Excluir la cita actual
+
+        if citas_conflicto.exists():
+            cita_conflicto = citas_conflicto.first()
+            return Response({
+                'error': f'El veterinario ya tiene una cita a las {cita_conflicto.hora}',
+                'error_code': 'TIME_CONFLICT',
+                'cita_existente': {
+                    'id': str(cita_conflicto.id),
+                    'hora': str(cita_conflicto.hora),
+                    'mascota': cita_conflicto.mascota.nombreMascota
+                }
+            }, status=status.HTTP_409_CONFLICT)
+
+        # Verificar disponibilidad del nuevo slot
+        nuevo_slot = SlotTiempo.objects.filter(
+            veterinario=cita.veterinario,
+            fecha=nueva_fecha_obj,
+            hora_inicio=nueva_hora_obj
+        ).first()
+
+        if nuevo_slot:
+            if not nuevo_slot.disponible:
+                return Response({
+                    'error': 'El nuevo slot no está disponible',
+                    'error_code': 'SLOT_NOT_AVAILABLE',
+                    'motivo': nuevo_slot.motivo_no_disponible
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+        # 1. Liberar slot anterior
+        slot_anterior = SlotTiempo.objects.filter(
+            veterinario=cita.veterinario,
+            fecha=fecha_anterior,
+            hora_inicio=hora_anterior
+        ).first()
+
+        if slot_anterior:
+            slot_anterior.disponible = True
+            slot_anterior.motivo_no_disponible = ''
+            slot_anterior.save()
+
+        # 2. Actualizar la cita
         cita.fecha = nueva_fecha
         cita.hora = nueva_hora
         cita.estado = EstadoCita.REPROGRAMADA
         cita.save()
-        return Response({'status': 'cita reprogramada'}, status=status.HTTP_200_OK)
+
+        # 3. Marcar nuevo slot como ocupado
+        if nuevo_slot:
+            nuevo_slot.disponible = False
+            nuevo_slot.motivo_no_disponible = 'ocupado'
+            nuevo_slot.reservado_hasta = None  # Limpiar reserva temporal si existe
+            nuevo_slot.save()
+
+        return Response({
+            'status': 'cita reprogramada',
+            'mensaje': 'Cita reprogramada exitosamente',
+            'slot_anterior_liberado': str(slot_anterior.id) if slot_anterior else None,
+            'nuevo_slot_ocupado': str(nuevo_slot.id) if nuevo_slot else None,
+            'nueva_fecha': nueva_fecha,
+            'nueva_hora': nueva_hora
+        }, status=status.HTTP_200_OK)
 
     @action(detail=False, methods=['get'], url_path='por-veterinario/(?P<veterinario_id>[^/.]+)')
     def por_veterinario(self, request, veterinario_id=None):
@@ -708,6 +795,204 @@ class CitaViewSet(viewsets.ModelViewSet):
         citas_vet = Cita.objects.filter(veterinario__id=veterinario_id)
         serializer = self.get_serializer(citas_vet, many=True)
         return Response(serializer.data)
+
+    @action(detail=False, methods=['get'], url_path='mi-calendario')
+    def mi_calendario(self, request):
+        """
+        GET /api/citas/mi-calendario/?fecha=2025-10-06
+
+        Endpoint para VETERINARIOS: Ver sus propias citas del día.
+        Si no se especifica fecha, muestra las del día actual.
+
+        Query params:
+        - fecha: YYYY-MM-DD (opcional, default: hoy)
+
+        Retorna citas ordenadas por hora con información completa.
+        """
+        from datetime import date as date_class
+
+        # Obtener fecha del query param o usar hoy
+        fecha_str = request.query_params.get('fecha')
+        if fecha_str:
+            try:
+                fecha = date_class.fromisoformat(fecha_str)
+            except ValueError:
+                return Response({
+                    'error': 'Formato de fecha inválido. Use YYYY-MM-DD',
+                    'error_code': 'INVALID_DATE_FORMAT'
+                }, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            fecha = date_class.today()
+
+        # Obtener veterinario del usuario autenticado
+        # (Esto depende de cómo tengan configurada la autenticación)
+        # Por ahora, permitir especificar veterinario_id en query params
+        veterinario_id = request.query_params.get('veterinario_id')
+
+        if not veterinario_id:
+            return Response({
+                'error': 'Se requiere veterinario_id en los query params',
+                'error_code': 'MISSING_VETERINARIO_ID'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            veterinario = Veterinario.objects.get(id=veterinario_id)
+        except Veterinario.DoesNotExist:
+            return Response({
+                'error': 'Veterinario no encontrado',
+                'error_code': 'VETERINARIO_NOT_FOUND'
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        # Obtener citas del veterinario para esa fecha
+        citas = Cita.objects.filter(
+            veterinario=veterinario,
+            fecha=fecha
+        ).exclude(
+            estado='cancelada'
+        ).select_related(
+            'mascota', 'servicio', 'responsable'
+        ).order_by('hora')
+
+        # Construir respuesta con información detallada
+        citas_data = []
+        for cita in citas:
+            citas_data.append({
+                'id': str(cita.id),
+                'hora': str(cita.hora),
+                'estado': cita.estado,
+                'mascota': {
+                    'id': str(cita.mascota.id),
+                    'nombre': cita.mascota.nombreMascota,
+                    'especie': cita.mascota.especie,
+                    'raza': cita.mascota.raza
+                },
+                'responsable': {
+                    'id': str(cita.responsable.id),
+                    'nombre': f"{cita.responsable.nombres} {cita.responsable.apellidos}",
+                    'telefono': cita.responsable.telefono
+                },
+                'servicio': {
+                    'id': str(cita.servicio.id),
+                    'nombre': cita.servicio.nombre,
+                    'categoria': cita.servicio.categoria,
+                    'duracion_minutos': cita.servicio.duracion_total_minutos(),
+                    'precio': str(cita.servicio.precio)
+                },
+                'notas': cita.notas or ''
+            })
+
+        return Response({
+            'fecha': str(fecha),
+            'veterinario': {
+                'id': str(veterinario.id),
+                'nombre': f"{veterinario.trabajador.nombres} {veterinario.trabajador.apellidos}"
+            },
+            'total_citas': len(citas_data),
+            'citas': citas_data,
+            'status': 'success'
+        }, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['get'], url_path='calendario-recepcion')
+    def calendario_recepcion(self, request):
+        """
+        GET /api/citas/calendario-recepcion/?fecha=2025-10-06
+
+        Endpoint para RECEPCIONISTAS: Ver todas las citas de TODOS los veterinarios del día.
+        Si no se especifica fecha, muestra las del día actual.
+
+        Query params:
+        - fecha: YYYY-MM-DD (opcional, default: hoy)
+        - veterinario: UUID (opcional, filtrar por veterinario específico)
+
+        Retorna citas agrupadas por veterinario, ordenadas por hora.
+        """
+        from datetime import date as date_class
+
+        # Obtener fecha del query param o usar hoy
+        fecha_str = request.query_params.get('fecha')
+        if fecha_str:
+            try:
+                fecha = date_class.fromisoformat(fecha_str)
+            except ValueError:
+                return Response({
+                    'error': 'Formato de fecha inválido. Use YYYY-MM-DD',
+                    'error_code': 'INVALID_DATE_FORMAT'
+                }, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            fecha = date_class.today()
+
+        # Filtro opcional por veterinario
+        veterinario_id = request.query_params.get('veterinario')
+
+        # Base query
+        citas_query = Cita.objects.filter(
+            fecha=fecha
+        ).exclude(
+            estado='cancelada'
+        ).select_related(
+            'veterinario', 'veterinario__trabajador', 'mascota', 'servicio', 'responsable'
+        ).order_by('veterinario', 'hora')
+
+        # Aplicar filtro de veterinario si existe
+        if veterinario_id:
+            citas_query = citas_query.filter(veterinario_id=veterinario_id)
+
+        citas = citas_query
+
+        # Agrupar por veterinario
+        veterinarios_dict = {}
+        for cita in citas:
+            vet_id = str(cita.veterinario.id)
+
+            if vet_id not in veterinarios_dict:
+                veterinarios_dict[vet_id] = {
+                    'veterinario': {
+                        'id': vet_id,
+                        'nombre': f"{cita.veterinario.trabajador.nombres} {cita.veterinario.trabajador.apellidos}",
+                        'especialidad': cita.veterinario.especialidad
+                    },
+                    'citas': []
+                }
+
+            veterinarios_dict[vet_id]['citas'].append({
+                'id': str(cita.id),
+                'hora': str(cita.hora),
+                'estado': cita.estado,
+                'mascota': {
+                    'id': str(cita.mascota.id),
+                    'nombre': cita.mascota.nombreMascota,
+                    'especie': cita.mascota.especie,
+                    'raza': cita.mascota.raza
+                },
+                'responsable': {
+                    'id': str(cita.responsable.id),
+                    'nombre': f"{cita.responsable.nombres} {cita.responsable.apellidos}",
+                    'telefono': cita.responsable.telefono
+                },
+                'servicio': {
+                    'id': str(cita.servicio.id),
+                    'nombre': cita.servicio.nombre,
+                    'categoria': cita.servicio.categoria,
+                    'duracion_minutos': cita.servicio.duracion_total_minutos(),
+                    'precio': str(cita.servicio.precio)
+                },
+                'notas': cita.notas or ''
+            })
+
+        # Convertir dict a lista
+        veterinarios_lista = list(veterinarios_dict.values())
+
+        # Calcular totales
+        total_citas = sum(len(v['citas']) for v in veterinarios_lista)
+        total_veterinarios = len(veterinarios_lista)
+
+        return Response({
+            'fecha': str(fecha),
+            'total_veterinarios': total_veterinarios,
+            'total_citas': total_citas,
+            'veterinarios': veterinarios_lista,
+            'status': 'success'
+        }, status=status.HTTP_200_OK)
 
     # 🛒 NUEVOS ENDPOINTS PARA SERVICIOS CATEGORIZADOS
 
