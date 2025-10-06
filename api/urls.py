@@ -27,12 +27,19 @@ router.register(r'historial-vacunacion', HistorialVacunacionViewSet)
 router.register(r'historial-medico', HistorialMedicoViewSet)
 
 urlpatterns = router.urls + [
+    # Autenticación
     path('login/', LoginView.as_view(), name='token_obtain_pair'),
     path('refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     path('trabajadores/registro/', RegistrarTrabajadorView.as_view(), name='registro_trabajador'),
+
+    # Permisos y usuario autenticado
+    path('auth/permisos/', obtener_permisos_usuario, name='obtener_permisos'),
+    path('auth/me/', obtener_info_usuario, name='info_usuario'),
+
     # Endpoints de alertas y dashboard
     path('alertas/', alertas_dashboard, name='alertas'),
     path('dashboard/alertas-vacunacion/', alertas_dashboard, name='alertas_dashboard'),
+
     # Endpoint para obtener veterinario externo
     path('veterinario-externo/', get_veterinario_externo, name='veterinario-externo'),
 ]

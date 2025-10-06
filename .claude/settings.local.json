@@ -1,29 +1,7 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python manage.py:*)",
-      "Bash(python test:*)",
-      "Bash(python:*)",
-      "Bash(git checkout:*)",
-      "Bash(timeout:*)",
-      "Bash(curl:*)",
-      "Bash(dir:*)",
-      "Bash(git push:*)",
-      "Bash(git add:*)",
-      "Bash(git fetch:*)",
-      "Bash(git rm:*)",
-      "Bash(git commit:*)",
-      "Bash(taskkill:*)",
-      "Bash(findstr:*)",
-      "Bash(del apitests.py)",
-      "Bash(git log:*)",
-      "Bash(env_veterinariaScriptspython.exe manage.py makemigrations --name=\"mejorar_sistema_slots\")",
-      "Bash(./env_veterinaria/Scripts/python.exe manage.py makemigrations --name=\"mejorar_sistema_slots\")",
-      "Bash(./env_veterinaria/Scripts/python.exe manage.py migrate)",
-      "Bash(./env_veterinaria/Scripts/python.exe test_sistema_slots.py)",
-      "Bash(.env_veterinariaScriptspython.exe manage.py check)",
-      "Bash(./env_veterinaria/Scripts/python.exe manage.py check)",
-      "Bash(./env_veterinaria/Scripts/python.exe test_nuevos_endpoints.py)"
+      "Bash(./env_veterinaria/Scripts/python.exe test_verificacion_final.py)"
     ],
     "deny": [],
     "ask": []

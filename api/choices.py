@@ -15,12 +15,16 @@ class Disponibilidad:
 class Rol:
     RECEPCIONISTA = 'recepcionista'
     VETERINARIO = 'veterinario'
+    VETERINARIO_EXTERNO = 'veterinario_externo'
+    RESPONSABLE = 'Responsable'  # Dueño de mascota (legacy - mantener por compatibilidad)
     INVENTARIO = 'inventario'
     ADMINISTRADOR = 'administrador'
 
     ROL_CHOICES = [
         (RECEPCIONISTA, 'Recepcionista'),
         (VETERINARIO, 'Veterinario'),
+        (VETERINARIO_EXTERNO, 'Veterinario Externo'),
+        (RESPONSABLE, 'Responsable/Dueño'),  # Solo para usuarios de clientes
         (INVENTARIO, 'Inventario'),
         (ADMINISTRADOR, 'Administrador'),
     ]

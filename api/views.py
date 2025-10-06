@@ -2654,19 +2654,39 @@ def get_veterinario_externo(request):
     URL: GET /api/veterinario-externo/
     """
     try:
-        veterinario_externo = Veterinario.objects.get(
-            trabajador__email='externo@veterinaria.com'
-        )
+        # Intentar buscar por el email nuevo primero
+        veterinario_externo = Veterinario.objects.filter(
+            trabajador__email='veterinario.externo@sistema.com'
+        ).first()
+
+        # Si no existe, buscar por el email antiguo (compatibilidad)
+        if not veterinario_externo:
+            veterinario_externo = Veterinario.objects.filter(
+                trabajador__email='externo@veterinaria.com'
+            ).first()
+
+        # Si no existe ninguno, buscar por rol veterinario_externo
+        if not veterinario_externo:
+            veterinario_externo = Veterinario.objects.filter(
+                trabajador__usuario__rol='veterinario_externo'
+            ).first()
+
+        if not veterinario_externo:
+            return Response({
+                'error': 'Veterinario externo no encontrado. Verifica que la migración se ejecutó correctamente.'
+            }, status=404)
+
         return Response({
             'veterinario_id': str(veterinario_externo.id),
             'veterinario_externo_id': str(veterinario_externo.id),
             'nombre': f"{veterinario_externo.trabajador.nombres} {veterinario_externo.trabajador.apellidos}",
+            'email': veterinario_externo.trabajador.email,
             'mensaje': 'Veterinario para historial de vacunación externa'
         })
-    except Veterinario.DoesNotExist:
+    except Exception as e:
         return Response({
-            'error': 'Veterinario externo no encontrado. Verifica que la migración se ejecutó correctamente.'
-        }, status=404)
+            'error': f'Error al buscar veterinario externo: {str(e)}'
+        }, status=500)
 
 
 class HistorialMedicoViewSet(viewsets.ModelViewSet):
@@ -3317,5 +3337,144 @@ class CitaProfesionalViewSet(viewsets.ModelViewSet):
             })
 
         return sorted(recomendaciones, key=lambda x: x['diferencia_minutos'])
+
+
+# ============================================================================
+# ENDPOINTS DE AUTENTICACIÓN Y PERMISOS
+# ============================================================================
+
+@api_view(['GET'])
+def obtener_permisos_usuario(request):
+    """
+    GET /api/auth/permisos/
+
+    Obtiene los permisos del usuario autenticado.
+    El frontend usa esto para mostrar/ocultar opciones del menú.
+
+    Requiere: Token JWT en headers
+
+    Returns:
+        {
+            "usuario": {
+                "id": "uuid",
+                "email": "user@example.com",
+                "rol": "veterinario",
+                "rol_display": "Veterinario"
+            },
+            "permisos": {
+                "dashboard": {"ver": true},
+                "citas": {
+                    "ver": true,
+                    "crear": false,
+                    ...
+                },
+                ...
+            }
+        }
+    """
+    from .permissions import PermisosPorRol
+    from .choices import Rol
+
+    if not request.user.is_authenticated:
+        return Response({
+            'error': 'Usuario no autenticado',
+            'error_code': 'NOT_AUTHENTICATED'
+        }, status=status.HTTP_401_UNAUTHORIZED)
+
+    usuario = request.user
+    rol = usuario.rol
+
+    # Obtener nombre legible del rol
+    rol_display = dict(Rol.ROL_CHOICES).get(rol, rol)
+
+    # Obtener permisos del rol
+    permisos = PermisosPorRol.obtener_permisos(rol)
+
+    return Response({
+        'usuario': {
+            'id': str(usuario.id),
+            'email': usuario.email,
+            'rol': rol,
+            'rol_display': rol_display,
+            'is_staff': usuario.is_staff,
+            'is_superuser': usuario.is_superuser
+        },
+        'permisos': permisos,
+        'status': 'success'
+    }, status=status.HTTP_200_OK)
+
+
+@api_view(['GET'])
+def obtener_info_usuario(request):
+    """
+    GET /api/auth/me/
+
+    Obtiene información completa del usuario autenticado.
+    Incluye datos del trabajador si existe.
+
+    Requiere: Token JWT en headers
+
+    Returns:
+        {
+            "id": "uuid",
+            "email": "user@example.com",
+            "rol": "veterinario",
+            "trabajador": {
+                "id": "uuid",
+                "nombres": "Juan",
+                "apellidos": "Pérez",
+                "telefono": "987654321"
+            },
+            "veterinario": {  // Solo si es veterinario
+                "id": "uuid",
+                "especialidad": "Medicina General"
+            }
+        }
+    """
+    if not request.user.is_authenticated:
+        return Response({
+            'error': 'Usuario no autenticado',
+            'error_code': 'NOT_AUTHENTICATED'
+        }, status=status.HTTP_401_UNAUTHORIZED)
+
+    usuario = request.user
+    response_data = {
+        'id': str(usuario.id),
+        'email': usuario.email,
+        'rol': usuario.rol,
+        'rol_display': dict(Rol.ROL_CHOICES).get(usuario.rol, usuario.rol),
+        'is_staff': usuario.is_staff
+    }
+
+    # Agregar datos del trabajador si existe
+    try:
+        trabajador = usuario.trabajador
+        response_data['trabajador'] = {
+            'id': str(trabajador.id),
+            'nombres': trabajador.nombres,
+            'apellidos': trabajador.apellidos,
+            'email': trabajador.email,
+            'telefono': trabajador.telefono,
+            'documento': trabajador.documento,
+            'estado': trabajador.estado
+        }
+
+        # Si es veterinario, agregar datos adicionales
+        if usuario.rol == Rol.VETERINARIO:
+            try:
+                veterinario = Veterinario.objects.get(trabajador=trabajador)
+                response_data['veterinario'] = {
+                    'id': str(veterinario.id),
+                    'especialidad': veterinario.especialidad,
+                    'registro_profesional': veterinario.registro_profesional,
+                    'anios_experiencia': veterinario.anios_experiencia
+                }
+            except Veterinario.DoesNotExist:
+                pass
+
+    except Trabajador.DoesNotExist:
+        response_data['trabajador'] = None
+
+    return Response(response_data, status=status.HTTP_200_OK)
 
 
