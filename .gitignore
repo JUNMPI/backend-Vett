@@ -163,4 +163,14 @@ aplicar_*.py
 crear_*.py
 corregir_*.py
 analyze_*.py
+ejecutar_*.bat
 nul
+
+# Claude Code documentation
+CLAUDE.md
+CLAUDE_*.md
+*_CLAUDE.md
+SISTEMA_SLOTS_*.md
+RESUMEN_*.md
+INSTRUCCIONES_*.md
+README_SISTEMA_*.md

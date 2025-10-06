@@ -9,6 +9,7 @@ from django.shortcuts import get_object_or_404
 from django.db import transaction, IntegrityError
 from django.core.exceptions import ValidationError
 from django.db.models import Q, F
+from django.utils import timezone
 
 # Imports para fechas y tiempo
 from datetime import date, timedelta
@@ -531,22 +532,148 @@ class CitaViewSet(viewsets.ModelViewSet):
             return Cita.objects.filter(veterinario__id=vet_id)
         return Cita.objects.all()
 
+    def create(self, request, *args, **kwargs):
+        """
+        Crear cita con validación de slots y prevención de conflictos
+        """
+        from datetime import datetime, timedelta
+
+        data = request.data
+        veterinario_id = data.get('veterinario')
+        fecha = data.get('fecha')
+        hora = data.get('hora')
+        servicio_id = data.get('servicio')
+
+        try:
+            # Validar que existan los objetos
+            veterinario = Veterinario.objects.get(id=veterinario_id)
+            servicio = Servicio.objects.get(id=servicio_id)
+            fecha_obj = datetime.strptime(fecha, '%Y-%m-%d').date()
+            hora_obj = datetime.strptime(hora, '%H:%M' if ':' in hora and len(hora) == 5 else '%H:%M:%S').time()
+
+        except (Veterinario.DoesNotExist, Servicio.DoesNotExist):
+            return Response({
+                'error': 'Veterinario o Servicio no encontrado',
+                'error_code': 'INVALID_REFERENCES'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except ValueError:
+            return Response({
+                'error': 'Formato de fecha u hora inválido',
+                'error_code': 'INVALID_DATE_FORMAT'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Calcular duración total del servicio
+        duracion_total = servicio.duracion_total_minutos()
+
+        # Verificar conflictos con otras citas
+        hora_inicio_dt = datetime.combine(fecha_obj, hora_obj)
+        hora_fin_dt = hora_inicio_dt + timedelta(minutes=duracion_total)
+
+        citas_conflicto = Cita.objects.filter(
+            veterinario=veterinario,
+            fecha=fecha_obj,
+            estado__in=['pendiente', 'confirmada']  # Solo citas activas
+        ).exclude(
+            Q(hora__gte=hora_fin_dt.time()) | Q(hora__lt=hora_obj)
+        )
+
+        if citas_conflicto.exists():
+            cita_conflicto = citas_conflicto.first()
+            return Response({
+                'error': f'El veterinario ya tiene una cita a las {cita_conflicto.hora}',
+                'error_code': 'TIME_CONFLICT',
+                'cita_existente': {
+                    'id': str(cita_conflicto.id),
+                    'hora': str(cita_conflicto.hora),
+                    'mascota': cita_conflicto.mascota.nombreMascota
+                }
+            }, status=status.HTTP_409_CONFLICT)
+
+        # Buscar slot correspondiente
+        slot = SlotTiempo.objects.filter(
+            veterinario=veterinario,
+            fecha=fecha_obj,
+            hora_inicio=hora_obj
+        ).first()
+
+        # Si existe slot, validar disponibilidad
+        if slot:
+            if not slot.disponible:
+                return Response({
+                    'error': 'El slot seleccionado no está disponible',
+                    'error_code': 'SLOT_NOT_AVAILABLE',
+                    'motivo': slot.motivo_no_disponible
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            if slot.esta_reservado_temporalmente():
+                return Response({
+                    'error': 'El slot está reservado temporalmente por otro usuario',
+                    'error_code': 'SLOT_RESERVED',
+                    'reservado_hasta': slot.reservado_hasta
+                }, status=status.HTTP_409_CONFLICT)
+
+        # Crear la cita
+        serializer = self.get_serializer(data=data)
+        if serializer.is_valid():
+            cita = serializer.save()
+
+            # Marcar slot como ocupado si existe
+            if slot:
+                slot.disponible = False
+                slot.motivo_no_disponible = 'ocupado'
+                slot.reservado_hasta = None  # Limpiar reserva temporal
+                slot.save()
+
+            return Response({
+                'mensaje': 'Cita creada exitosamente',
+                'cita': serializer.data,
+                'slot_ocupado': str(slot.id) if slot else None,
+                'status': 'success'
+            }, status=status.HTTP_201_CREATED)
+        else:
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
     @action(detail=True, methods=['patch'], url_path='cambiar-estado')
     def cambiar_estado(self, request, pk=None):
         """
         PATCH /api/citas/{id}/cambiar-estado/
         Body: { "estado": "<nuevo_estado>" }
         Solo admite uno de los valores definidos en EstadoCita.ESTADO_CHOICES.
+
+        Si se cancela una cita, libera automáticamente el slot
         """
         cita = self.get_object()
         nuevo_estado = request.data.get('estado')
+
         if nuevo_estado not in dict(EstadoCita.ESTADO_CHOICES).keys():
             return Response(
                 {'error': f"Estado inválido: {nuevo_estado}"},
                 status=status.HTTP_400_BAD_REQUEST
             )
+
+        estado_anterior = cita.estado
         cita.estado = nuevo_estado
         cita.save()
+
+        # Si se cancela la cita, liberar el slot
+        if nuevo_estado == EstadoCita.CANCELADA and estado_anterior != EstadoCita.CANCELADA:
+            slot = SlotTiempo.objects.filter(
+                veterinario=cita.veterinario,
+                fecha=cita.fecha,
+                hora_inicio=cita.hora
+            ).first()
+
+            if slot:
+                slot.disponible = True
+                slot.motivo_no_disponible = ''
+                slot.save()
+
+                return Response({
+                    'status': 'estado actualizado',
+                    'mensaje': 'Cita cancelada y slot liberado',
+                    'slot_liberado': str(slot.id)
+                }, status=status.HTTP_200_OK)
+
         return Response({'status': 'estado actualizado'}, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['patch'], url_path='reprogramar')
@@ -2396,15 +2523,16 @@ class SlotTiempoViewSet(viewsets.ModelViewSet):
     """
     queryset = SlotTiempo.objects.all()
     serializer_class = SlotTiempoSerializer
-    filterset_fields = ['veterinario', 'fecha', 'disponible', 'bloqueado']
+    filterset_fields = ['veterinario', 'fecha', 'disponible']
     ordering_fields = ['fecha', 'hora_inicio', 'veterinario']
     ordering = ['fecha', 'hora_inicio']
 
     def get_queryset(self):
         """Optimizar consultas y filtros"""
         queryset = super().get_queryset().select_related(
-            'veterinario__trabajador'
-        ).prefetch_related('citas')
+            'veterinario__trabajador',
+            'consultorio'
+        )
 
         # Filtros por fecha
         fecha_desde = self.request.query_params.get('fecha_desde')
@@ -2417,10 +2545,20 @@ class SlotTiempoViewSet(viewsets.ModelViewSet):
 
         return queryset
 
-    @action(detail=False, methods=['post'])
+    @action(detail=False, methods=['post'], url_path='generar-slots')
     def generar_slots(self, request):
         """
+        POST /api/slots-tiempo/generar-slots/
+
         Generar slots automáticamente basado en horarios de trabajo
+
+        Body:
+        {
+            "veterinario_id": "uuid",
+            "fecha_inicio": "2025-10-06",
+            "fecha_fin": "2025-10-12",
+            "duracion_slot_minutos": 30  // opcional, default 30
+        }
         """
         from datetime import date, timedelta, datetime, time
 
@@ -2432,29 +2570,36 @@ class SlotTiempoViewSet(viewsets.ModelViewSet):
 
         if not all([veterinario_id, fecha_inicio, fecha_fin]):
             return Response({
-                'error': 'veterinario_id, fecha_inicio y fecha_fin son requeridos'
-            }, status=400)
+                'error': 'veterinario_id, fecha_inicio y fecha_fin son requeridos',
+                'error_code': 'MISSING_PARAMETERS'
+            }, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             veterinario = Veterinario.objects.get(id=veterinario_id)
             fecha_inicio = datetime.strptime(fecha_inicio, '%Y-%m-%d').date()
             fecha_fin = datetime.strptime(fecha_fin, '%Y-%m-%d').date()
-        except (Veterinario.DoesNotExist, ValueError) as e:
-            return Response({'error': str(e)}, status=400)
+        except Veterinario.DoesNotExist:
+            return Response({
+                'error': 'Veterinario no encontrado',
+                'error_code': 'VETERINARIAN_NOT_FOUND'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except ValueError as e:
+            return Response({
+                'error': 'Formato de fecha inválido. Use YYYY-MM-DD',
+                'error_code': 'INVALID_DATE_FORMAT'
+            }, status=status.HTTP_400_BAD_REQUEST)
 
         slots_creados = 0
+        slots_omitidos = 0
         fecha_actual = fecha_inicio
 
-        # Mapear días de la semana
-        dias_semana = ['LUNES', 'MARTES', 'MIERCOLES', 'JUEVES', 'VIERNES', 'SABADO', 'DOMINGO']
-
         while fecha_actual <= fecha_fin:
-            dia_semana = dias_semana[fecha_actual.weekday()]
+            dia_semana_numero = fecha_actual.weekday()  # 0=Lunes, 6=Domingo
 
             # Buscar horario de trabajo para este día
             horario = HorarioTrabajo.objects.filter(
                 veterinario=veterinario,
-                dia_semana=dia_semana,
+                dia_semana=dia_semana_numero,
                 activo=True
             ).first()
 
@@ -2466,48 +2611,92 @@ class SlotTiempoViewSet(viewsets.ModelViewSet):
                 while hora_actual < hora_fin_dia:
                     hora_fin_slot = hora_actual + timedelta(minutes=duracion_slot)
 
-                    # Verificar si no existe ya este slot
-                    if not SlotTiempo.objects.filter(
-                        veterinario=veterinario,
-                        fecha=fecha_actual,
-                        hora_inicio=hora_actual.time(),
-                        hora_fin=hora_fin_slot.time()
-                    ).exists():
+                    # No generar slots que pasen del horario de fin
+                    if hora_fin_slot.time() > horario.hora_fin:
+                        break
 
-                        # Verificar que no coincida con horario de descanso
-                        en_descanso = False
-                        if horario.hora_inicio_descanso and horario.hora_fin_descanso:
-                            if (hora_actual.time() >= horario.hora_inicio_descanso and
-                                hora_actual.time() < horario.hora_fin_descanso):
-                                en_descanso = True
+                    # Verificar que no coincida con horario de descanso
+                    en_descanso = False
+                    if horario.tiene_descanso and horario.hora_inicio_descanso and horario.hora_fin_descanso:
+                        if (hora_actual.time() >= horario.hora_inicio_descanso and
+                            hora_actual.time() < horario.hora_fin_descanso):
+                            en_descanso = True
 
-                        if not en_descanso:
+                    if not en_descanso:
+                        # Verificar si no existe ya este slot
+                        slot_existente = SlotTiempo.objects.filter(
+                            veterinario=veterinario,
+                            fecha=fecha_actual,
+                            hora_inicio=hora_actual.time()
+                        ).first()
+
+                        if not slot_existente:
                             SlotTiempo.objects.create(
                                 veterinario=veterinario,
                                 fecha=fecha_actual,
                                 hora_inicio=hora_actual.time(),
-                                hora_fin=hora_fin_slot.time()
+                                hora_fin=hora_fin_slot.time(),
+                                duracion_minutos=duracion_slot,
+                                disponible=True,
+                                generado_automaticamente=True
                             )
                             slots_creados += 1
+                        else:
+                            slots_omitidos += 1
 
                     hora_actual = hora_fin_slot
 
             fecha_actual += timedelta(days=1)
 
         return Response({
-            'mensaje': f'Se crearon {slots_creados} slots para el veterinario {veterinario}',
+            'mensaje': f'Slots generados exitosamente para {veterinario.trabajador.nombres} {veterinario.trabajador.apellidos}',
             'slots_creados': slots_creados,
-            'periodo': f'{fecha_inicio} a {fecha_fin}'
-        })
+            'slots_omitidos': slots_omitidos,
+            'periodo': {
+                'inicio': str(fecha_inicio),
+                'fin': str(fecha_fin)
+            },
+            'veterinario': {
+                'id': str(veterinario.id),
+                'nombre': f'{veterinario.trabajador.nombres} {veterinario.trabajador.apellidos}'
+            },
+            'status': 'success'
+        }, status=status.HTTP_201_CREATED)
 
     @action(detail=False, methods=['get'])
     def disponibles(self, request):
         """
+        GET /api/slots-tiempo/disponibles/
+
         Obtener solo slots disponibles con filtros
+
+        Query params:
+        - veterinario: UUID del veterinario
+        - fecha: Fecha específica (YYYY-MM-DD)
+        - fecha_desde: Desde fecha (YYYY-MM-DD)
+        - fecha_hasta: Hasta fecha (YYYY-MM-DD)
+        - solo_futuro: true/false (default: true)
         """
+        from datetime import date, datetime
+
+        # Liberar slots con reserva temporal expirada
+        slots_expirados = SlotTiempo.objects.filter(
+            reservado_hasta__lt=timezone.now()
+        ).exclude(reservado_hasta__isnull=True)
+
+        for slot in slots_expirados:
+            slot.reservado_hasta = None
+            slot.save()
+
+        # Filtrar slots disponibles
         queryset = self.get_queryset().filter(
-            disponible=True,
-            bloqueado=False
+            disponible=True
+        )
+
+        # Excluir slots reservados temporalmente
+        queryset = queryset.filter(
+            Q(reservado_hasta__isnull=True) |
+            Q(reservado_hasta__lt=timezone.now())
         )
 
         # Filtro por veterinario
@@ -2515,14 +2704,203 @@ class SlotTiempoViewSet(viewsets.ModelViewSet):
         if veterinario_id:
             queryset = queryset.filter(veterinario__id=veterinario_id)
 
+        # Filtro por fecha específica
+        fecha_especifica = request.query_params.get('fecha')
+        if fecha_especifica:
+            try:
+                fecha = datetime.strptime(fecha_especifica, '%Y-%m-%d').date()
+                queryset = queryset.filter(fecha=fecha)
+            except ValueError:
+                pass
+
         # Solo fechas futuras
         solo_futuro = request.query_params.get('solo_futuro', 'true')
         if solo_futuro.lower() == 'true':
-            from datetime import date
             queryset = queryset.filter(fecha__gte=date.today())
 
         serializer = self.get_serializer(queryset, many=True)
-        return Response(serializer.data)
+        return Response({
+            'data': serializer.data,
+            'total': queryset.count(),
+            'status': 'success'
+        })
+
+    @action(detail=True, methods=['post'], url_path='reservar-temporal')
+    def reservar_temporal(self, request, pk=None):
+        """
+        POST /api/slots-tiempo/{id}/reservar-temporal/
+
+        Reserva temporalmente un slot por N minutos
+
+        Body:
+        {
+            "minutos": 5  // default: 5
+        }
+        """
+        slot = self.get_object()
+
+        # Verificar si está disponible
+        if not slot.disponible:
+            return Response({
+                'error': 'El slot no está disponible',
+                'error_code': 'SLOT_NOT_AVAILABLE'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Verificar si ya está reservado
+        if slot.esta_reservado_temporalmente():
+            return Response({
+                'error': f'El slot ya está reservado hasta {slot.reservado_hasta}',
+                'error_code': 'SLOT_ALREADY_RESERVED',
+                'reservado_hasta': slot.reservado_hasta
+            }, status=status.HTTP_409_CONFLICT)
+
+        # Reservar temporalmente
+        minutos = int(request.data.get('minutos', 5))
+        slot.reservado_hasta = timezone.now() + timedelta(minutes=minutos)
+        slot.save()
+
+        return Response({
+            'mensaje': 'Slot reservado temporalmente',
+            'slot_id': str(slot.id),
+            'reservado_hasta': slot.reservado_hasta,
+            'minutos_restantes': minutos,
+            'status': 'success'
+        }, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], url_path='liberar-reserva')
+    def liberar_reserva(self, request, pk=None):
+        """
+        POST /api/slots-tiempo/{id}/liberar-reserva/
+
+        Libera una reserva temporal manualmente
+        """
+        slot = self.get_object()
+
+        if not slot.reservado_hasta:
+            return Response({
+                'error': 'El slot no tiene una reserva temporal activa',
+                'error_code': 'NO_RESERVATION_FOUND'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        slot.reservado_hasta = None
+        slot.save()
+
+        return Response({
+            'mensaje': 'Reserva liberada exitosamente',
+            'slot_id': str(slot.id),
+            'status': 'success'
+        }, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['post'], url_path='liberar-expirados')
+    def liberar_expirados(self, request):
+        """
+        POST /api/slots-tiempo/liberar-expirados/
+
+        Libera automáticamente todos los slots con reserva expirada
+        (Este endpoint se puede llamar desde un cron job)
+        """
+        slots_expirados = SlotTiempo.objects.filter(
+            reservado_hasta__lt=timezone.now()
+        ).exclude(reservado_hasta__isnull=True)
+
+        count = slots_expirados.count()
+        slots_expirados.update(reservado_hasta=None)
+
+        return Response({
+            'mensaje': f'Se liberaron {count} slots con reserva expirada',
+            'slots_liberados': count,
+            'status': 'success'
+        }, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['get'], url_path='calendario')
+    def calendario(self, request):
+        """
+        GET /api/slots-tiempo/calendario/
+
+        Obtiene slots en formato calendario visual
+
+        Query params:
+        - veterinario: UUID del veterinario (requerido)
+        - fecha: Fecha específica (YYYY-MM-DD) o default hoy
+        """
+        from datetime import date, datetime
+
+        veterinario_id = request.query_params.get('veterinario')
+        if not veterinario_id:
+            return Response({
+                'error': 'El parámetro veterinario es requerido',
+                'error_code': 'MISSING_VETERINARIO'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        fecha_param = request.query_params.get('fecha')
+        if fecha_param:
+            try:
+                fecha = datetime.strptime(fecha_param, '%Y-%m-%d').date()
+            except ValueError:
+                return Response({
+                    'error': 'Formato de fecha inválido. Use YYYY-MM-DD',
+                    'error_code': 'INVALID_DATE_FORMAT'
+                }, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            fecha = date.today()
+
+        # Obtener slots del día
+        slots = SlotTiempo.objects.filter(
+            veterinario__id=veterinario_id,
+            fecha=fecha
+        ).order_by('hora_inicio')
+
+        # Agrupar por estado
+        calendario_data = []
+        for slot in slots:
+            # Verificar si hay cita asociada
+            from .models import Cita
+            cita = Cita.objects.filter(
+                veterinario__id=veterinario_id,
+                fecha=fecha,
+                hora=slot.hora_inicio
+            ).exclude(estado='CANCELADA').first()
+
+            estado_slot = 'disponible'
+            detalle = None
+
+            if cita:
+                estado_slot = 'ocupado'
+                detalle = {
+                    'cita_id': str(cita.id),
+                    'mascota': cita.mascota.nombreMascota,
+                    'servicio': cita.servicio.nombre,
+                    'estado': cita.estado
+                }
+            elif slot.esta_reservado_temporalmente():
+                estado_slot = 'reservado_temporal'
+                detalle = {
+                    'reservado_hasta': slot.reservado_hasta
+                }
+            elif not slot.disponible:
+                estado_slot = 'no_disponible'
+                detalle = {
+                    'motivo': slot.motivo_no_disponible
+                }
+
+            calendario_data.append({
+                'slot_id': str(slot.id),
+                'hora_inicio': slot.hora_inicio.strftime('%H:%M'),
+                'hora_fin': slot.hora_fin.strftime('%H:%M'),
+                'duracion_minutos': slot.duracion_minutos,
+                'estado': estado_slot,
+                'detalle': detalle
+            })
+
+        return Response({
+            'fecha': str(fecha),
+            'veterinario_id': veterinario_id,
+            'slots': calendario_data,
+            'total_slots': len(calendario_data),
+            'disponibles': len([s for s in calendario_data if s['estado'] == 'disponible']),
+            'ocupados': len([s for s in calendario_data if s['estado'] == 'ocupado']),
+            'status': 'success'
+        })
 
 
 class CitaProfesionalViewSet(viewsets.ModelViewSet):

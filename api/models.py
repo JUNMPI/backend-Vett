@@ -709,7 +709,10 @@ class SlotTiempo(models.Model):
     fecha = models.DateField()
     hora_inicio = models.TimeField()
     hora_fin = models.TimeField()
-    duracion_minutos = models.IntegerField(help_text="Duración calculada en minutos")
+    duracion_minutos = models.IntegerField(
+        default=30,
+        help_text="Duración calculada en minutos"
+    )
 
     # Disponibilidad
     disponible = models.BooleanField(default=True)
@@ -767,6 +770,20 @@ class SlotTiempo(models.Model):
 
     def __str__(self):
         return f"{self.fecha} {self.hora_inicio}-{self.hora_fin} - {self.veterinario} ({'Disponible' if self.disponible else 'No disponible'})"
+
+    def esta_reservado_temporalmente(self):
+        """Verifica si el slot está reservado temporalmente y aún vigente"""
+        if self.reservado_hasta:
+            return timezone.now() < self.reservado_hasta
+        return False
+
+    def liberar_si_expirado(self):
+        """Libera el slot si la reserva temporal expiró"""
+        if self.reservado_hasta and timezone.now() >= self.reservado_hasta:
+            self.reservado_hasta = None
+            self.save()
+            return True
+        return False
 
 
 # 🐾 SISTEMA DE VACUNACIÓN - MODELOS PERÚ
