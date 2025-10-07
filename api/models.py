@@ -1050,3 +1050,56 @@ class HistorialMedico(models.Model):
         return f"{self.mascota} - {self.get_tipo_display()} ({self.fecha.strftime('%d/%m/%Y')})"
 
 
+# ============================================
+# SISTEMA DE GESTIÓN DINÁMICA DE PERMISOS
+# ============================================
+
+class PermisoRol(models.Model):
+    """
+    Modelo para gestionar permisos dinámicos por rol.
+    Permite al admin modificar qué puede ver/hacer cada rol desde el frontend.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    # Rol al que aplica este permiso (importar desde choices)
+    from .choices import Rol as RolChoice
+    rol = models.CharField(
+        max_length=50,
+        choices=RolChoice.ROL_CHOICES,
+        help_text="Rol al que se aplica este permiso"
+    )
+
+    # Módulo del sistema
+    modulo = models.CharField(
+        max_length=50,
+        help_text="Módulo del sistema (dashboard, citas, mascotas, etc.)"
+    )
+
+    # Acciones permitidas (JSONField para flexibilidad)
+    permisos = models.JSONField(
+        default=dict,
+        help_text="Permisos del módulo: {'ver': True, 'crear': False, 'editar': True, ...}"
+    )
+
+    # Descripción del módulo (para mostrar en el frontend)
+    descripcion_modulo = models.CharField(
+        max_length=200,
+        blank=True,
+        help_text="Descripción del módulo para mostrar en la UI"
+    )
+
+    # Metadata
+    fecha_creacion = models.DateTimeField(auto_now_add=True)
+    fecha_modificacion = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['rol', 'modulo']
+        verbose_name = 'Permiso por Rol'
+        verbose_name_plural = 'Permisos por Rol'
+        # Un rol solo puede tener UNA configuración por módulo
+        unique_together = [['rol', 'modulo']]
+
+    def __str__(self):
+        return f"{self.rol} - {self.modulo}"
+
+

@@ -779,3 +779,62 @@ class CitaExtendidaSerializer(serializers.ModelSerializer):
     def get_puede_completar(self, obj):
         """Determina si la cita puede ser completada"""
         return obj.estado in ['PENDIENTE', 'EN_PROCESO']
+
+
+# ============================================
+# SERIALIZERS PARA GESTIÓN DINÁMICA DE PERMISOS
+# ============================================
+
+class PermisoRolSerializer(serializers.ModelSerializer):
+    """
+    Serializer para gestión de permisos por rol.
+    """
+    rol_display = serializers.CharField(source='get_rol_display', read_only=True)
+
+    class Meta:
+        model = PermisoRol
+        fields = [
+            'id', 'rol', 'rol_display', 'modulo', 'permisos',
+            'descripcion_modulo', 'fecha_creacion', 'fecha_modificacion'
+        ]
+        read_only_fields = ['fecha_creacion', 'fecha_modificacion']
+
+    def validate(self, data):
+        """
+        Validación personalizada:
+        - Los permisos deben ser un diccionario
+        - El rol debe existir en choices
+        """
+        if 'permisos' in data and not isinstance(data['permisos'], dict):
+            raise serializers.ValidationError({
+                'permisos': 'Los permisos deben ser un objeto JSON válido'
+            })
+
+        return data
+
+
+class PermisoRolBulkUpdateSerializer(serializers.Serializer):
+    """
+    Serializer para actualización masiva de permisos.
+    Permite actualizar múltiples permisos de un rol en una sola petición.
+    """
+    rol = serializers.ChoiceField(choices=Rol.ROL_CHOICES)
+    permisos = serializers.ListField(
+        child=serializers.DictField(),
+        help_text="Lista de permisos a actualizar: [{'modulo': 'citas', 'permisos': {'ver': true}}, ...]"
+    )
+
+    def validate_permisos(self, value):
+        """
+        Validar que cada elemento tenga 'modulo' y 'permisos'
+        """
+        for item in value:
+            if 'modulo' not in item or 'permisos' not in item:
+                raise serializers.ValidationError(
+                    "Cada permiso debe tener 'modulo' y 'permisos'"
+                )
+            if not isinstance(item['permisos'], dict):
+                raise serializers.ValidationError(
+                    "El campo 'permisos' debe ser un objeto JSON"
+                )
+        return value

@@ -1,7 +1,11 @@
 {
   "permissions": {
     "allow": [
-      "Bash(./env_veterinaria/Scripts/python.exe test_verificacion_final.py)"
+      "Bash(./env_veterinaria/Scripts/python.exe manage.py makemigrations --name=\"sistema_permisos_dinamico\")",
+      "Bash(./env_veterinaria/Scripts/python.exe manage.py runserver)",
+      "Bash(./env_veterinaria/Scripts/python.exe crear_veterinario_prueba.py)",
+      "Bash(./env_veterinaria/Scripts/python.exe crear_recepcionista_prueba.py)",
+      "Bash(./env_veterinaria/Scripts/python.exe actualizar_password_admin.py)"
     ],
     "deny": [],
     "ask": []

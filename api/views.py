@@ -26,7 +26,7 @@ from .models import (
     Servicio, Producto, Mascota, Responsable, Cita, Usuario, DiaTrabajo,
     EstadoCita, Vacuna, HistorialVacunacion, HistorialMedico,
     # 🚀 Nuevos modelos profesionales
-    HorarioTrabajo, SlotTiempo
+    HorarioTrabajo, SlotTiempo, PermisoRol
 )
 
 # Imports específicos de serializers
@@ -37,7 +37,9 @@ from .serializers import (
     CitaSerializer, CustomTokenObtainPairSerializer, VacunaSerializer,
     HistorialVacunacionSerializer, HistorialMedicoSerializer, VacunasAlertaSerializer,
     # 🚀 Nuevos serializers profesionales
-    HorarioTrabajoSerializer, SlotTiempoSerializer, CitaProfesionalSerializer
+    HorarioTrabajoSerializer, SlotTiempoSerializer, CitaProfesionalSerializer,
+    # 🔐 Serializers de permisos
+    PermisoRolSerializer, PermisoRolBulkUpdateSerializer
 )
 
 # ViewSet for Especialidad
@@ -3476,5 +3478,235 @@ def obtener_info_usuario(request):
         response_data['trabajador'] = None
 
     return Response(response_data, status=status.HTTP_200_OK)
+
+
+# ============================================
+# GESTIÓN DINÁMICA DE PERMISOS
+# ============================================
+
+class PermisoRolViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet para gestión dinámica de permisos por rol.
+
+    Endpoints:
+    - GET /api/permisos-rol/              → Listar todos los permisos
+    - GET /api/permisos-rol/{id}/         → Ver un permiso específico
+    - POST /api/permisos-rol/             → Crear nuevo permiso
+    - PUT /api/permisos-rol/{id}/         → Actualizar permiso completo
+    - PATCH /api/permisos-rol/{id}/       → Actualizar permiso parcial
+    - DELETE /api/permisos-rol/{id}/      → Eliminar permiso
+
+    Endpoints personalizados:
+    - GET /api/permisos-rol/por-rol/?rol=veterinario   → Permisos de un rol específico
+    - POST /api/permisos-rol/actualizar-masivo/        → Actualizar múltiples permisos a la vez
+    - GET /api/permisos-rol/modulos-disponibles/       → Lista de módulos del sistema
+    - POST /api/permisos-rol/inicializar-defaults/     → Crear permisos por defecto
+    """
+    queryset = PermisoRol.objects.all()
+    serializer_class = PermisoRolSerializer
+    # permission_classes = [EsAdministrador]  # Solo admin puede gestionar permisos
+
+    def get_queryset(self):
+        """
+        Permite filtrar por rol via query param
+        """
+        queryset = PermisoRol.objects.all()
+        rol = self.request.query_params.get('rol', None)
+
+        if rol:
+            queryset = queryset.filter(rol=rol)
+
+        return queryset
+
+    @action(detail=False, methods=['get'], url_path='por-rol')
+    def por_rol(self, request):
+        """
+        GET /api/permisos-rol/por-rol/?rol=veterinario
+
+        Obtiene todos los permisos de un rol específico.
+        """
+        rol = request.query_params.get('rol')
+
+        if not rol:
+            return Response(
+                {'error': 'Debe proporcionar el parámetro "rol"'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        permisos = PermisoRol.objects.filter(rol=rol)
+        serializer = self.get_serializer(permisos, many=True)
+
+        return Response({
+            'rol': rol,
+            'permisos': serializer.data
+        })
+
+    @action(detail=False, methods=['post'], url_path='actualizar-masivo')
+    def actualizar_masivo(self, request):
+        """
+        POST /api/permisos-rol/actualizar-masivo/
+
+        Body:
+        {
+            "rol": "veterinario",
+            "permisos": [
+                {"modulo": "citas", "permisos": {"ver": true, "crear": false}},
+                {"modulo": "mascotas", "permisos": {"ver": true, "editar": false}}
+            ]
+        }
+
+        Actualiza múltiples permisos de un rol en una sola petición.
+        """
+        serializer = PermisoRolBulkUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        rol = serializer.validated_data['rol']
+        permisos_data = serializer.validated_data['permisos']
+
+        actualizados = []
+        creados = []
+
+        with transaction.atomic():
+            for item in permisos_data:
+                modulo = item['modulo']
+                permisos = item['permisos']
+                descripcion = item.get('descripcion_modulo', '')
+
+                permiso_obj, created = PermisoRol.objects.update_or_create(
+                    rol=rol,
+                    modulo=modulo,
+                    defaults={
+                        'permisos': permisos,
+                        'descripcion_modulo': descripcion
+                    }
+                )
+
+                if created:
+                    creados.append(modulo)
+                else:
+                    actualizados.append(modulo)
+
+        return Response({
+            'mensaje': 'Permisos actualizados correctamente',
+            'rol': rol,
+            'actualizados': actualizados,
+            'creados': creados,
+            'total': len(permisos_data)
+        }, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['get'], url_path='modulos-disponibles')
+    def modulos_disponibles(self, request):
+        """
+        GET /api/permisos-rol/modulos-disponibles/
+
+        Retorna la lista de módulos disponibles en el sistema
+        con sus acciones posibles.
+        """
+        modulos = {
+            'dashboard': {
+                'nombre': 'Dashboard',
+                'descripcion': 'Panel principal con estadísticas',
+                'acciones': ['ver']
+            },
+            'citas': {
+                'nombre': 'Citas',
+                'descripcion': 'Gestión de citas veterinarias',
+                'acciones': ['ver', 'crear', 'editar', 'eliminar', 'calendario_general', 'mi_calendario']
+            },
+            'mascotas': {
+                'nombre': 'Mascotas',
+                'descripcion': 'Gestión de mascotas',
+                'acciones': ['ver', 'crear', 'editar', 'eliminar']
+            },
+            'responsables': {
+                'nombre': 'Clientes',
+                'descripcion': 'Gestión de dueños de mascotas',
+                'acciones': ['ver', 'crear', 'editar', 'eliminar']
+            },
+            'vacunas': {
+                'nombre': 'Vacunación',
+                'descripcion': 'Sistema de vacunación',
+                'acciones': ['ver', 'crear', 'editar', 'eliminar', 'aplicar', 'historial']
+            },
+            'historial_clinico': {
+                'nombre': 'Historial Clínico',
+                'descripcion': 'Historial médico de mascotas',
+                'acciones': ['ver', 'crear', 'editar']
+            },
+            'servicios': {
+                'nombre': 'Servicios',
+                'descripcion': 'Catálogo de servicios veterinarios',
+                'acciones': ['ver', 'crear', 'editar', 'eliminar']
+            },
+            'productos': {
+                'nombre': 'Productos',
+                'descripcion': 'Inventario de productos',
+                'acciones': ['ver', 'crear', 'editar', 'eliminar']
+            },
+            'usuarios': {
+                'nombre': 'Usuarios',
+                'descripcion': 'Gestión de usuarios del sistema',
+                'acciones': ['ver', 'crear', 'editar', 'eliminar']
+            },
+            'trabajadores': {
+                'nombre': 'Trabajadores',
+                'descripcion': 'Gestión de trabajadores',
+                'acciones': ['ver', 'crear', 'editar', 'eliminar']
+            },
+            'veterinarios': {
+                'nombre': 'Veterinarios',
+                'descripcion': 'Gestión de veterinarios',
+                'acciones': ['ver', 'crear', 'editar', 'eliminar', 'horarios', 'slots']
+            },
+            'reportes': {
+                'nombre': 'Reportes',
+                'descripcion': 'Generación de reportes',
+                'acciones': ['ver', 'generar']
+            },
+            'configuracion': {
+                'nombre': 'Configuración',
+                'descripcion': 'Configuración del sistema',
+                'acciones': ['ver', 'editar']
+            }
+        }
+
+        return Response(modulos)
+
+    @action(detail=False, methods=['post'], url_path='inicializar-defaults')
+    def inicializar_defaults(self, request):
+        """
+        POST /api/permisos-rol/inicializar-defaults/
+
+        Crea los permisos por defecto para todos los roles.
+        Útil para inicializar el sistema o resetear permisos.
+        """
+        from .permissions import PermisosPorRol
+
+        creados = 0
+        actualizados = 0
+
+        with transaction.atomic():
+            for rol, permisos_rol in PermisosPorRol.PERMISOS.items():
+                for modulo, permisos_modulo in permisos_rol.items():
+                    permiso_obj, created = PermisoRol.objects.update_or_create(
+                        rol=rol,
+                        modulo=modulo,
+                        defaults={
+                            'permisos': permisos_modulo,
+                            'descripcion_modulo': f'Permisos de {modulo} para {rol}'
+                        }
+                    )
+
+                    if created:
+                        creados += 1
+                    else:
+                        actualizados += 1
+
+        return Response({
+            'mensaje': 'Permisos inicializados correctamente',
+            'creados': creados,
+            'actualizados': actualizados,
+            'total': creados + actualizados
+        }, status=status.HTTP_200_OK)
 
 

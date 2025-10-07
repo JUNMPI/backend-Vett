@@ -26,6 +26,9 @@ router.register(r'vacunas', VacunaViewSet)
 router.register(r'historial-vacunacion', HistorialVacunacionViewSet)
 router.register(r'historial-medico', HistorialMedicoViewSet)
 
+# 🔐 URLs del sistema de gestión de permisos
+router.register(r'permisos-rol', PermisoRolViewSet)
+
 urlpatterns = router.urls + [
     # Autenticación
     path('login/', LoginView.as_view(), name='token_obtain_pair'),

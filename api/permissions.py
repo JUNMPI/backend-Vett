@@ -122,8 +122,8 @@ class PermisosPorRol:
         },
 
         Rol.VETERINARIO: {
-            # Dashboard (limitado)
-            'dashboard': {'ver': True},
+            # Dashboard - SOLO ADMIN
+            'dashboard': {'ver': False},
 
             # Gestión de Citas (solo lectura y sus propias citas)
             'citas': {
@@ -219,8 +219,8 @@ class PermisosPorRol:
         },
 
         Rol.RECEPCIONISTA: {
-            # Dashboard
-            'dashboard': {'ver': True},
+            # Dashboard - SOLO ADMIN
+            'dashboard': {'ver': False},
 
             # Gestión de Citas (COMPLETO)
             'citas': {
@@ -297,14 +297,32 @@ class PermisosPorRol:
     @classmethod
     def obtener_permisos(cls, rol):
         """
-        Obtiene los permisos de un rol específico
+        Obtiene los permisos de un rol específico.
+        PRIORIDAD: Base de datos > Diccionario hardcodeado
         """
+        # Primero intentar obtener de la base de datos
+        try:
+            from .models import PermisoRol as PermisoRolModel
+            permisos_db = PermisoRolModel.objects.filter(rol=rol)
+
+            if permisos_db.exists():
+                # Convertir QuerySet a diccionario
+                permisos_dict = {}
+                for permiso in permisos_db:
+                    permisos_dict[permiso.modulo] = permiso.permisos
+                return permisos_dict
+        except Exception as e:
+            # Si falla (ej: tabla no existe), usar diccionario hardcodeado
+            pass
+
+        # Fallback al diccionario hardcodeado
         return cls.PERMISOS.get(rol, {})
 
     @classmethod
     def puede(cls, rol, modulo, accion='ver'):
         """
-        Verifica si un rol puede realizar una acción en un módulo
+        Verifica si un rol puede realizar una acción en un módulo.
+        PRIORIDAD: Base de datos > Diccionario hardcodeado
 
         Args:
             rol: El rol del usuario (admin, veterinario, recepcionista)
@@ -314,6 +332,20 @@ class PermisosPorRol:
         Returns:
             bool: True si tiene permiso, False si no
         """
+        # Primero intentar obtener de la base de datos
+        try:
+            from .models import PermisoRol as PermisoRolModel
+            permiso_db = PermisoRolModel.objects.filter(rol=rol, modulo=modulo).first()
+
+            if permiso_db:
+                permisos_modulo = permiso_db.permisos
+                if isinstance(permisos_modulo, dict):
+                    return permisos_modulo.get(accion, False)
+        except Exception as e:
+            # Si falla, usar diccionario hardcodeado
+            pass
+
+        # Fallback al diccionario hardcodeado
         permisos_rol = cls.PERMISOS.get(rol, {})
         permisos_modulo = permisos_rol.get(modulo, {})
 
