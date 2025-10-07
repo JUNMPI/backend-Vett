@@ -526,13 +526,31 @@ class CitaViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         """
-        Si se recibe query param 'veterinario_id', filtrar por ese vet;
-        de lo contrario, devolver todas las citas.
+        Filtrado automático de citas según el rol del usuario:
+        - VETERINARIO: Solo ve SUS propias citas
+        - ADMIN/RECEPCIONISTA: Ven TODAS las citas
+
+        También soporta filtrado manual con query param 'veterinario_id'
         """
+        user = self.request.user
+        queryset = Cita.objects.all()
+
+        # Si es veterinario, solo mostrar SUS citas
+        if user.rol == 'veterinario':
+            try:
+                # Obtener el veterinario asociado al usuario
+                veterinario = user.trabajador.veterinario
+                queryset = queryset.filter(veterinario=veterinario)
+            except Exception as e:
+                # Si no tiene veterinario asociado, no mostrar nada
+                return Cita.objects.none()
+
+        # Filtrado adicional por query param (para admin/recepcionista)
         vet_id = self.request.query_params.get('veterinario_id')
-        if vet_id:
-            return Cita.objects.filter(veterinario__id=vet_id)
-        return Cita.objects.all()
+        if vet_id and user.rol != 'veterinario':
+            queryset = queryset.filter(veterinario__id=vet_id)
+
+        return queryset
 
     def create(self, request, *args, **kwargs):
         """
@@ -810,6 +828,7 @@ class CitaViewSet(viewsets.ModelViewSet):
         - fecha: YYYY-MM-DD (opcional, default: hoy)
 
         Retorna citas ordenadas por hora con información completa.
+        NOTA: Detecta automáticamente el veterinario del usuario autenticado.
         """
         from datetime import date as date_class
 
@@ -827,23 +846,17 @@ class CitaViewSet(viewsets.ModelViewSet):
             fecha = date_class.today()
 
         # Obtener veterinario del usuario autenticado
-        # (Esto depende de cómo tengan configurada la autenticación)
-        # Por ahora, permitir especificar veterinario_id en query params
-        veterinario_id = request.query_params.get('veterinario_id')
-
-        if not veterinario_id:
-            return Response({
-                'error': 'Se requiere veterinario_id en los query params',
-                'error_code': 'MISSING_VETERINARIO_ID'
-            }, status=status.HTTP_400_BAD_REQUEST)
+        user = request.user
 
         try:
-            veterinario = Veterinario.objects.get(id=veterinario_id)
-        except Veterinario.DoesNotExist:
+            # Intentar obtener el veterinario asociado al usuario
+            veterinario = user.trabajador.veterinario
+        except Exception as e:
             return Response({
-                'error': 'Veterinario no encontrado',
-                'error_code': 'VETERINARIO_NOT_FOUND'
-            }, status=status.HTTP_404_NOT_FOUND)
+                'error': 'Usuario no tiene un veterinario asociado',
+                'error_code': 'NO_VETERINARIO_ASOCIADO',
+                'detalle': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
 
         # Obtener citas del veterinario para esa fecha
         citas = Cita.objects.filter(
