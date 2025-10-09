@@ -5,7 +5,15 @@
       "Bash(./env_veterinaria/Scripts/python.exe manage.py runserver)",
       "Bash(./env_veterinaria/Scripts/python.exe crear_veterinario_prueba.py)",
       "Bash(./env_veterinaria/Scripts/python.exe crear_recepcionista_prueba.py)",
-      "Bash(./env_veterinaria/Scripts/python.exe actualizar_password_admin.py)"
+      "Bash(./env_veterinaria/Scripts/python.exe actualizar_password_admin.py)",
+      "Bash(git log:*)",
+      "Bash(./env_veterinaria/Scripts/python.exe manage.py shell:*)",
+      "Bash(./env_veterinaria/Scripts/python.exe test_citas_duplicadas.py)",
+      "Bash(./env_veterinaria/Scripts/python.exe manage.py makemigrations --name=\"validacion_citas_unicas\")",
+      "Bash(./env_veterinaria/Scripts/python.exe manage.py migrate)",
+      "Bash(./env_veterinaria/Scripts/python.exe test_validacion_citas.py)",
+      "Bash(./env_veterinaria/Scripts/python.exe test_api_citas.py)",
+      "Bash(./env_veterinaria/Scripts/python.exe test_final_citas.py)"
     ],
     "deny": [],
     "ask": []

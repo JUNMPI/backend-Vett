@@ -505,6 +505,14 @@ class Cita(models.Model):
 
     class Meta:
         ordering = ['fecha', 'hora']
+        # Constraint único: Un veterinario no puede tener 2 citas a la misma hora
+        constraints = [
+            models.UniqueConstraint(
+                fields=['veterinario', 'fecha', 'hora'],
+                name='unique_cita_veterinario_fecha_hora',
+                violation_error_message='El veterinario ya tiene una cita agendada en esta fecha y hora.'
+            )
+        ]
 
     def __str__(self):
         return f"{self.fecha} {self.hora} — {self.mascota} ({self.get_estado_display()})"
