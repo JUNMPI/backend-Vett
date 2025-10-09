@@ -113,6 +113,29 @@ class Veterinario(models.Model):
 
     def __str__(self):
         return f"{self.trabajador.nombres} {self.trabajador.apellidos} - {self.especialidad.nombre}"
+
+    def get_dias_trabajo_dinamicos(self):
+        """
+        Genera dinámicamente los días de trabajo desde HorarioTrabajo.
+        Esto reemplaza la tabla DiaTrabajo (deprecada).
+        """
+        MAPEO_DIA_SEMANA_A_STRING = {
+            0: 'LUNES',
+            1: 'MARTES',
+            2: 'MIERCOLES',
+            3: 'JUEVES',
+            4: 'VIERNES',
+            5: 'SABADO',
+            6: 'DOMINGO'
+        }
+
+        dias = []
+        for horario in self.horarios_trabajo.filter(activo=True).order_by('dia_semana'):
+            dia_string = MAPEO_DIA_SEMANA_A_STRING.get(horario.dia_semana)
+            if dia_string:
+                dias.append({'dia': dia_string})
+
+        return dias
 class DiaTrabajo(models.Model):
     DIA_CHOICES = [
         ('LUNES', 'Lunes'),

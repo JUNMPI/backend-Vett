@@ -223,8 +223,8 @@ class DiaTrabajoSerializer(serializers.ModelSerializer):
 class VeterinarioSerializer(serializers.ModelSerializer):
     trabajador = serializers.PrimaryKeyRelatedField(queryset=Trabajador.objects.all())
     especialidad = serializers.PrimaryKeyRelatedField(queryset=Especialidad.objects.all())
-    dias_trabajo = DiaTrabajoSerializer(many=True, required=False, allow_null=True)  # DEPRECADO - mantener por compatibilidad
-    horarios_trabajo = serializers.SerializerMethodField(read_only=True)  # NUEVO - Sistema de horarios completo
+    dias_trabajo = serializers.SerializerMethodField(read_only=True)  # Generado dinámicamente desde horarios_trabajo
+    horarios_trabajo = serializers.SerializerMethodField(read_only=True)  # Sistema de horarios completo
     nombreEspecialidad = serializers.CharField(source='especialidad.nombre', read_only=True)
     trabajador_detalle = serializers.SerializerMethodField(read_only=True)
     especialidad_detalle = serializers.SerializerMethodField(read_only=True)
@@ -233,6 +233,13 @@ class VeterinarioSerializer(serializers.ModelSerializer):
         model = Veterinario
         fields = ['id', 'trabajador', 'trabajador_detalle', 'especialidad', 'especialidad_detalle',
                   'nombreEspecialidad', 'dias_trabajo', 'horarios_trabajo']
+
+    def get_dias_trabajo(self, obj):
+        """
+        Genera días_trabajo dinámicamente desde horarios_trabajo.
+        Esto mantiene compatibilidad con frontend antiguo sin necesidad de tabla DiaTrabajo.
+        """
+        return obj.get_dias_trabajo_dinamicos()
 
     def get_horarios_trabajo(self, obj):
         """Obtener horarios de trabajo del veterinario"""
@@ -261,31 +268,8 @@ class VeterinarioSerializer(serializers.ModelSerializer):
             }
         return None
 
-    def create(self, validated_data):
-        dias_trabajo_data = validated_data.pop('dias_trabajo', [])
-        veterinario = Veterinario.objects.create(**validated_data)
-        
-        # Asociar los días de trabajo si se proporcionaron
-        for dia_data in dias_trabajo_data:
-            DiaTrabajo.objects.create(veterinario=veterinario, dia=dia_data['dia'])
-        
-        return veterinario
-
-    def update(self, instance, validated_data):
-        dias_trabajo_data = validated_data.pop('dias_trabajo', [])
-        
-        # Actualiza el veterinario
-        instance.trabajador = validated_data.get('trabajador', instance.trabajador)
-        instance.especialidad = validated_data.get('especialidad', instance.especialidad)
-        instance.save()
-        
-        # Actualizar los días de trabajo si se proporcionaron (puedes borrarlos y crear nuevos)
-        if dias_trabajo_data:
-            instance.dias_trabajo.all().delete()
-            for dia_data in dias_trabajo_data:
-                DiaTrabajo.objects.create(veterinario=instance, dia=dia_data['dia'])
-        
-        return instance
+    # Ya no necesitamos create/update personalizados
+    # dias_trabajo se genera automáticamente desde horarios_trabajo
 
 
 class TipoDocumentoSerializer(serializers.ModelSerializer):

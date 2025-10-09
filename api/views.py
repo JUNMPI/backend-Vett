@@ -23,11 +23,12 @@ import traceback
 # Imports específicos de modelos
 from .models import (
     Especialidad, Consultorio, TipoDocumento, Trabajador, Veterinario,
-    Servicio, Producto, Mascota, Responsable, Cita, Usuario, DiaTrabajo,
+    Servicio, Producto, Mascota, Responsable, Cita, Usuario,
     EstadoCita, Vacuna, HistorialVacunacion, HistorialMedico,
     # 🚀 Nuevos modelos profesionales
     HorarioTrabajo, SlotTiempo, PermisoRol
 )
+# DiaTrabajo ya no se usa - dias_trabajo se genera dinámicamente desde HorarioTrabajo
 
 # Imports específicos de serializers
 from .serializers import (
@@ -259,23 +260,11 @@ class VeterinarioViewSet(viewsets.ModelViewSet):
     queryset = Veterinario.objects.all()
     serializer_class = VeterinarioSerializer
 
-    @action(detail=True, methods=['patch'], url_path='asignar-dias')
-    def asignar_dias(self, request, pk=None):
-        veterinario = self.get_object()
-        dias = request.data.get('dias_trabajo', [])
+    # ENDPOINT ELIMINADO: asignar-dias
+    # Ya no es necesario porque dias_trabajo se genera automáticamente desde horarios_trabajo.
+    # El frontend debe usar el endpoint POST /api/horarios-trabajo/ en su lugar.
 
-        if not isinstance(dias, list):
-            return Response({'error': 'Se requiere una lista de días.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Elimina días anteriores
-        DiaTrabajo.objects.filter(veterinario=veterinario).delete()
-
-        # Asigna nuevos días
-        for dia in dias:
-            DiaTrabajo.objects.create(veterinario=veterinario, dia=dia.upper())
-
-        return Response({'status': 'Días asignados correctamente'})
-    #buscar el terabajador por id de trabajador
+    #buscar el trabajador por id de trabajador
     @action(detail=False, methods=['get'], url_path='por-trabajador/(?P<trabajador_id>[^/.]+)')
     def por_trabajador(self, request, trabajador_id=None):
         veterinario = get_object_or_404(Veterinario, trabajador__id=trabajador_id)
