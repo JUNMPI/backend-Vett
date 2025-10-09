@@ -17,7 +17,9 @@
       "Bash(./env_veterinaria/Scripts/python.exe setup_horarios_carlos.py)",
       "Bash(./env_veterinaria/Scripts/python.exe test_api_horarios.py)",
       "Bash(echo:*)",
-      "Bash(./env_veterinaria/Scripts/python.exe test_horarios_trabajo.py)"
+      "Bash(./env_veterinaria/Scripts/python.exe test_horarios_trabajo.py)",
+      "Bash(./env_veterinaria/Scripts/python.exe test_endpoint_real.py)",
+      "Bash(./env_veterinaria/Scripts/python.exe crear_citas_carlos.py)"
     ],
     "deny": [],
     "ask": []
