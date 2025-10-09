@@ -517,6 +517,56 @@ class Cita(models.Model):
     def __str__(self):
         return f"{self.fecha} {self.hora} — {self.mascota} ({self.get_estado_display()})"
 
+    def validar_horario_trabajo(self):
+        """
+        Valida que la cita esté dentro del horario de trabajo del veterinario.
+
+        Returns:
+            tuple: (es_valido: bool, mensaje_error: str)
+        """
+        from datetime import datetime
+
+        # Obtener día de la semana de la cita (0=Lunes, 6=Domingo)
+        dia_semana = self.fecha.weekday()
+
+        # Buscar horario de trabajo del veterinario para ese día
+        horario = self.veterinario.horarios_trabajo.filter(
+            dia_semana=dia_semana,
+            activo=True
+        ).first()
+
+        # Si no hay horario configurado para ese día, el veterinario no trabaja
+        if not horario:
+            dias = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo']
+            return False, f"El veterinario no trabaja los {dias[dia_semana]}."
+
+        # Validar que la hora esté dentro del rango de trabajo
+        if self.hora < horario.hora_inicio or self.hora >= horario.hora_fin:
+            return False, f"La hora {self.hora} está fuera del horario de trabajo ({horario.hora_inicio} - {horario.hora_fin})."
+
+        # Validar que no esté en horario de descanso
+        if horario.tiene_descanso:
+            if horario.hora_inicio_descanso <= self.hora < horario.hora_fin_descanso:
+                return False, f"La hora {self.hora} está en el horario de descanso ({horario.hora_inicio_descanso} - {horario.hora_fin_descanso})."
+
+        return True, "OK"
+
+    def clean(self):
+        """
+        Validación del modelo antes de guardar.
+        """
+        from django.core.exceptions import ValidationError
+
+        super().clean()
+
+        # Validar horario de trabajo
+        es_valido, mensaje = self.validar_horario_trabajo()
+        if not es_valido:
+            raise ValidationError({
+                'hora': mensaje,
+                'error_code': 'FUERA_DE_HORARIO'
+            })
+
 
 # 🛒 MODELOS PARA SERVICIOS CATEGORIZADOS
 

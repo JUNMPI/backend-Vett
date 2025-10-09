@@ -13,7 +13,11 @@
       "Bash(./env_veterinaria/Scripts/python.exe manage.py migrate)",
       "Bash(./env_veterinaria/Scripts/python.exe test_validacion_citas.py)",
       "Bash(./env_veterinaria/Scripts/python.exe test_api_citas.py)",
-      "Bash(./env_veterinaria/Scripts/python.exe test_final_citas.py)"
+      "Bash(./env_veterinaria/Scripts/python.exe test_final_citas.py)",
+      "Bash(./env_veterinaria/Scripts/python.exe setup_horarios_carlos.py)",
+      "Bash(./env_veterinaria/Scripts/python.exe test_api_horarios.py)",
+      "Bash(echo:*)",
+      "Bash(./env_veterinaria/Scripts/python.exe test_horarios_trabajo.py)"
     ],
     "deny": [],
     "ask": []

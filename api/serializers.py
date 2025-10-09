@@ -350,7 +350,31 @@ class CitaSerializer(serializers.ModelSerializer):
             return f"{mascota.responsable.nombres} {mascota.responsable.apellidos}"
         except Mascota.DoesNotExist:
             return "Propietario no encontrado"
-        
+
+    def validate(self, attrs):
+        """
+        Validación personalizada que incluye validación de horarios de trabajo
+        """
+        # Crear instancia temporal para validar
+        instance = Cita(**attrs)
+
+        # Ejecutar validaciones del modelo (incluye validar_horario_trabajo)
+        try:
+            instance.full_clean()
+        except Exception as e:
+            # Convertir ValidationError de Django a DRF ValidationError
+            from rest_framework import serializers as drf_serializers
+            if hasattr(e, 'message_dict'):
+                # Es un ValidationError con diccionario
+                raise drf_serializers.ValidationError(e.message_dict)
+            elif hasattr(e, 'messages'):
+                # Es un ValidationError con lista de mensajes
+                raise drf_serializers.ValidationError(e.messages[0] if e.messages else str(e))
+            else:
+                raise drf_serializers.ValidationError(str(e))
+
+        return attrs
+
 class ConsultorioSerializer(serializers.ModelSerializer):
     disponible = serializers.ChoiceField(
         choices=Disponibilidad.DISPONIBILIDAD_CHOICES,
