@@ -223,11 +223,43 @@ class DiaTrabajoSerializer(serializers.ModelSerializer):
 class VeterinarioSerializer(serializers.ModelSerializer):
     trabajador = serializers.PrimaryKeyRelatedField(queryset=Trabajador.objects.all())
     especialidad = serializers.PrimaryKeyRelatedField(queryset=Especialidad.objects.all())
-    dias_trabajo = DiaTrabajoSerializer(many=True, required=False, allow_null=True)  # Usar el serializador anidado
+    dias_trabajo = DiaTrabajoSerializer(many=True, required=False, allow_null=True)  # DEPRECADO - mantener por compatibilidad
+    horarios_trabajo = serializers.SerializerMethodField(read_only=True)  # NUEVO - Sistema de horarios completo
     nombreEspecialidad = serializers.CharField(source='especialidad.nombre', read_only=True)
+    trabajador_detalle = serializers.SerializerMethodField(read_only=True)
+    especialidad_detalle = serializers.SerializerMethodField(read_only=True)
+
     class Meta:
         model = Veterinario
-        fields = ['id', 'trabajador', 'especialidad','nombreEspecialidad', 'dias_trabajo']  # Incluir dias_trabajo
+        fields = ['id', 'trabajador', 'trabajador_detalle', 'especialidad', 'especialidad_detalle',
+                  'nombreEspecialidad', 'dias_trabajo', 'horarios_trabajo']
+
+    def get_horarios_trabajo(self, obj):
+        """Obtener horarios de trabajo del veterinario"""
+        horarios = obj.horarios_trabajo.filter(activo=True).order_by('dia_semana')
+        return HorarioTrabajoSerializer(horarios, many=True).data
+
+    def get_trabajador_detalle(self, obj):
+        """Obtener detalle del trabajador"""
+        return {
+            'id': str(obj.trabajador.id),
+            'nombres': obj.trabajador.nombres,
+            'apellidos': obj.trabajador.apellidos,
+            'email': obj.trabajador.email,
+            'telefono': obj.trabajador.telefono,
+            'documento': obj.trabajador.documento,
+            'estado': obj.trabajador.estado
+        }
+
+    def get_especialidad_detalle(self, obj):
+        """Obtener detalle de la especialidad"""
+        if obj.especialidad:
+            return {
+                'id': str(obj.especialidad.id),
+                'nombre': obj.especialidad.nombre,
+                'estado': obj.especialidad.estado
+            }
+        return None
 
     def create(self, validated_data):
         dias_trabajo_data = validated_data.pop('dias_trabajo', [])

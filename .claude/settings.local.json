@@ -19,7 +19,10 @@
       "Bash(echo:*)",
       "Bash(./env_veterinaria/Scripts/python.exe test_horarios_trabajo.py)",
       "Bash(./env_veterinaria/Scripts/python.exe test_endpoint_real.py)",
-      "Bash(./env_veterinaria/Scripts/python.exe crear_citas_carlos.py)"
+      "Bash(./env_veterinaria/Scripts/python.exe crear_citas_carlos.py)",
+      "Bash(curl -s http://127.0.0.1:8000/api/veterinarios/)",
+      "Bash(python:*)",
+      "Bash(curl -s http://127.0.0.1:8000/api/veterinarios/7daca2f6-b80f-4737-9e02-9c4669dcd101/)"
     ],
     "deny": [],
     "ask": []
