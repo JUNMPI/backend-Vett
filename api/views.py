@@ -2759,10 +2759,29 @@ class HorarioTrabajoViewSet(viewsets.ModelViewSet):
     ordering = ['veterinario', 'dia_semana']
 
     def get_queryset(self):
-        """Optimizar consultas con select_related"""
-        return super().get_queryset().select_related(
+        """
+        Optimizar consultas con select_related y aplicar filtros de query params
+        """
+        queryset = super().get_queryset().select_related(
             'veterinario__trabajador'
         )
+
+        # Filtro por veterinario
+        veterinario_id = self.request.query_params.get('veterinario')
+        if veterinario_id:
+            queryset = queryset.filter(veterinario=veterinario_id)
+
+        # Filtro por día de la semana
+        dia_semana = self.request.query_params.get('dia_semana')
+        if dia_semana:
+            queryset = queryset.filter(dia_semana=dia_semana)
+
+        # Filtro por activo
+        activo = self.request.query_params.get('activo')
+        if activo is not None:
+            queryset = queryset.filter(activo=activo.lower() == 'true')
+
+        return queryset
 
     @action(detail=False, methods=['get'], url_path='veterinario/(?P<veterinario_id>[^/.]+)')
     def horarios_veterinario(self, request, veterinario_id=None):

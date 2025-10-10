@@ -25,7 +25,8 @@
       "Bash(curl -s http://127.0.0.1:8000/api/veterinarios/7daca2f6-b80f-4737-9e02-9c4669dcd101/)",
       "Bash(curl -s http://127.0.0.1:8000/api/veterinarios/f32cc57d-6656-4e84-bd32-8416db79c6cc/)",
       "Bash(./env_veterinaria/Scripts/python.exe limpiar_dias_trabajo.py)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "Bash(./env_veterinaria/Scripts/python.exe test_edicion_veterinario.py)"
     ],
     "deny": [],
     "ask": []
