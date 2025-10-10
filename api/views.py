@@ -3454,6 +3454,8 @@ def obtener_info_usuario(request):
             }
         }
     """
+    from .choices import Rol  # ✅ FIX: Importar Rol localmente
+
     if not request.user.is_authenticated:
         return Response({
             'error': 'Usuario no autenticado',
@@ -3476,7 +3478,7 @@ def obtener_info_usuario(request):
             'id': str(trabajador.id),
             'nombres': trabajador.nombres,
             'apellidos': trabajador.apellidos,
-            'email': trabajador.email,
+            'email': usuario.email,  # ✅ FIX: Usar usuario.email en lugar de trabajador.email (que es property)
             'telefono': trabajador.telefono,
             'documento': trabajador.documento,
             'estado': trabajador.estado
