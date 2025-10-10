@@ -62,21 +62,80 @@ class UsuarioSerializer(serializers.ModelSerializer):
         return representation
     
 # Serializador para el modelo Trabajador
-# En api/serializers.py, reemplaza TrabajadorSerializer existente
-
 class TrabajadorSerializer(serializers.ModelSerializer):
     tipodocumento = serializers.PrimaryKeyRelatedField(queryset=TipoDocumento.objects.all())
     tipodocumento_nombre = serializers.CharField(source='tipodocumento.nombre', read_only=True)
     usuario = UsuarioSerializer()
-    # 🆕 NUEVO CAMPO ESTADO
     estado = serializers.ChoiceField(choices=Estado.ESTADO_CHOICES, required=False, default=Estado.ACTIVO)
+
+    # ✅ Email calculado desde Usuario (read-only para compatibilidad)
+    email = serializers.EmailField(source='usuario.email', read_only=True)
 
     class Meta:
         model = Trabajador
         fields = [
             'id', 'nombres', 'apellidos', 'email', 'telefono',
-            'tipodocumento', 'tipodocumento_nombre', 'documento', 'usuario', 'estado'  # 🆕 Agregado estado
+            'tipodocumento', 'tipodocumento_nombre', 'documento', 'usuario', 'estado'
         ]
+
+    def validate(self, attrs):
+        """
+        Validación completa: documento duplicado + formato según tipo (Perú)
+        """
+        import re
+        from django.core.exceptions import ValidationError as CoreValidationError
+
+        documento = attrs.get('documento')
+        tipodocumento = attrs.get('tipodocumento')
+
+        # Validar documento duplicado
+        if documento and tipodocumento:
+            # Verificar si ya existe otro trabajador con mismo documento y tipo
+            query = Trabajador.objects.filter(
+                documento=documento,
+                tipodocumento=tipodocumento
+            )
+            if self.instance:
+                query = query.exclude(id=self.instance.id)
+
+            if query.exists():
+                raise serializers.ValidationError({
+                    "documento": "Ya existe un trabajador con este documento."
+                })
+
+            # Validar formato según tipo de documento (Perú)
+            tipo = tipodocumento.nombre.upper()
+            doc = documento.strip()
+
+            # DNI: 8 dígitos exactos
+            if tipo == 'DNI':
+                if not re.match(r'^\d{8}$', doc):
+                    raise serializers.ValidationError({
+                        'documento': 'El DNI debe tener exactamente 8 dígitos.'
+                    })
+
+            # Carnet de Extranjería: 9 dígitos
+            elif tipo in ['CE', 'CARNET DE EXTRANJERIA', 'CARNET DE EXTRANJERÍA']:
+                if not re.match(r'^\d{9}$', doc):
+                    raise serializers.ValidationError({
+                        'documento': 'El Carnet de Extranjería debe tener 9 dígitos.'
+                    })
+
+            # Pasaporte: Alfanumérico, 9-12 caracteres
+            elif tipo == 'PASAPORTE':
+                if not re.match(r'^[A-Z0-9]{9,12}$', doc.upper()):
+                    raise serializers.ValidationError({
+                        'documento': 'El Pasaporte debe tener entre 9 y 12 caracteres alfanuméricos.'
+                    })
+
+            # RUC: 11 dígitos
+            elif tipo == 'RUC':
+                if not re.match(r'^\d{11}$', doc):
+                    raise serializers.ValidationError({
+                        'documento': 'El RUC debe tener exactamente 11 dígitos.'
+                    })
+
+        return attrs
 
     def create(self, validated_data):
         usuario_data = validated_data.pop('usuario')
@@ -91,12 +150,17 @@ class TrabajadorSerializer(serializers.ModelSerializer):
         usuario_data = validated_data.pop('usuario', None)
 
         if usuario_data:
-            usuario_serializer = UsuarioSerializer(instance.usuario, data=usuario_data, partial=True)
+            usuario_serializer = UsuarioSerializer(
+                instance.usuario,
+                data=usuario_data,
+                partial=True
+            )
             usuario_serializer.is_valid(raise_exception=True)
             usuario_serializer.save()
 
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
+
         instance.save()
         return instance
 
@@ -156,47 +220,104 @@ class MascotaSerializer(serializers.ModelSerializer):
         return mascota
 
 class ResponsableSerializer(serializers.ModelSerializer):
-    usuario = UsuarioSerializer()
+    # ❌ ELIMINADO: usuario = UsuarioSerializer() (Responsable no tiene acceso al sistema)
+    tipodocumento = serializers.PrimaryKeyRelatedField(queryset=TipoDocumento.objects.all())
     tipodocumento_nombre = serializers.CharField(source='tipodocumento.nombre', read_only=True)
-    mascotas = MascotaSerializer(many=True, read_only=True)  # Agregamos las mascotas relacionadas
+    mascotas = MascotaSerializer(many=True, read_only=True)
 
     class Meta:
         model = Responsable
         fields = [
             'id', 'nombres', 'apellidos', 'email', 'telefono', 'direccion',
-            'ciudad', 'documento', 'tipodocumento','tipodocumento_nombre', 'emergencia', 'usuario','mascotas'
+            'ciudad', 'documento', 'tipodocumento', 'tipodocumento_nombre',
+            'emergencia', 'mascotas'
         ]
 
+    def validate(self, attrs):
+        """
+        Validación completa: email único + documento duplicado + formato (Perú)
+        """
+        import re
+
+        # Validar email único
+        email = attrs.get('email')
+        if email:
+            query = Responsable.objects.filter(email=email)
+            if self.instance:
+                query = query.exclude(id=self.instance.id)
+
+            if query.exists():
+                raise serializers.ValidationError({
+                    "email": "Este email ya está registrado por otro responsable."
+                })
+
+        # Validar documento único por tipo
+        documento = attrs.get('documento')
+        tipodocumento = attrs.get('tipodocumento')
+
+        if documento and tipodocumento:
+            query = Responsable.objects.filter(
+                documento=documento,
+                tipodocumento=tipodocumento
+            )
+            if self.instance:
+                query = query.exclude(id=self.instance.id)
+
+            if query.exists():
+                raise serializers.ValidationError({
+                    "documento": "Ya existe un responsable con este documento."
+                })
+
+            # Validar formato según tipo de documento (Perú)
+            tipo = tipodocumento.nombre.upper()
+            doc = documento.strip()
+
+            # DNI: 8 dígitos exactos
+            if tipo == 'DNI':
+                if not re.match(r'^\d{8}$', doc):
+                    raise serializers.ValidationError({
+                        'documento': 'El DNI debe tener exactamente 8 dígitos.'
+                    })
+
+            # Carnet de Extranjería: 9 dígitos
+            elif tipo in ['CE', 'CARNET DE EXTRANJERIA', 'CARNET DE EXTRANJERÍA']:
+                if not re.match(r'^\d{9}$', doc):
+                    raise serializers.ValidationError({
+                        'documento': 'El Carnet de Extranjería debe tener 9 dígitos.'
+                    })
+
+            # Pasaporte: Alfanumérico, 9-12 caracteres
+            elif tipo == 'PASAPORTE':
+                if not re.match(r'^[A-Z0-9]{9,12}$', doc.upper()):
+                    raise serializers.ValidationError({
+                        'documento': 'El Pasaporte debe tener entre 9 y 12 caracteres alfanuméricos.'
+                    })
+
+            # RUC: 11 dígitos
+            elif tipo == 'RUC':
+                if not re.match(r'^\d{11}$', doc):
+                    raise serializers.ValidationError({
+                        'documento': 'El RUC debe tener exactamente 11 dígitos.'
+                    })
+
+        return attrs
+
     def create(self, validated_data):
-        # Extraemos los datos del usuario del campo 'usuario'
-        usuario_data = validated_data.pop('usuario')
-
-        # Creamos el usuario usando el serializer
-        usuario_serializer = UsuarioSerializer(data=usuario_data)
-        usuario_serializer.is_valid(raise_exception=True)  # Verificamos si los datos son válidos
-        usuario = usuario_serializer.save()  # Guardamos el usuario
-
-        # Creamos el Responsable y asignamos el usuario
-        responsable = Responsable.objects.create(usuario=usuario, **validated_data)
+        # ✅ Simplificado: No hay usuario
+        responsable = Responsable.objects.create(**validated_data)
         return responsable
 
     def update(self, instance, validated_data):
-        usuario_data = validated_data.pop('usuario', None)
-
-        if usuario_data:
-            # Actualizamos el usuario si hay datos nuevos
-            usuario_serializer = UsuarioSerializer(instance.usuario, data=usuario_data, partial=True)
-            usuario_serializer.is_valid(raise_exception=True)
-            usuario_serializer.save()
-
+        # ✅ Simplificado: Solo actualizar campos directos
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
+
         instance.save()
         return instance
 
     def validate_email(self, value):
         """
-        Validación del campo email
+        Validación adicional del campo email (por si acaso)
         """
         if value:
             # Verificar que el email sea único (excluyendo el instance actual en updates)

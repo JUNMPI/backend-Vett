@@ -82,18 +82,15 @@ class Usuario(AbstractUser):
         ordering = ['email']
 
 # Crear el modelo de Trabajador
-# En api/models.py, reemplaza la clase Trabajador existente
-
 class Trabajador(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     nombres = models.CharField(max_length=100)
     apellidos = models.CharField(max_length=100)
-    email = models.EmailField()
+    # ❌ CAMPO ELIMINADO: email (ahora viene de usuario.email)
     telefono = models.CharField(max_length=20)
     tipodocumento = models.ForeignKey(TipoDocumento, on_delete=models.CASCADE, related_name='trabajadores')
     documento = models.CharField(max_length=20)
     usuario = models.OneToOneField(Usuario, on_delete=models.CASCADE, related_name='trabajador')
-    # 🆕 NUEVO CAMPO ESTADO
     estado = models.CharField(
         max_length=10,
         choices=Estado.ESTADO_CHOICES,
@@ -102,9 +99,71 @@ class Trabajador(models.Model):
 
     class Meta:
         ordering = ['nombres']
+        constraints = [
+            # Documento único por tipo de documento
+            models.UniqueConstraint(
+                fields=['tipodocumento', 'documento'],
+                name='unique_trabajador_documento',
+                violation_error_message='Ya existe un trabajador con este documento.'
+            ),
+        ]
 
     def __str__(self):
         return f"{self.nombres} {self.apellidos}"
+
+    @property
+    def email(self):
+        """
+        Email viene del Usuario (para login).
+        Mantiene compatibilidad con código existente.
+        """
+        return self.usuario.email if self.usuario else None
+
+    def clean(self):
+        """
+        Validación de documento según tipo (Perú)
+        """
+        super().clean()
+
+        if self.documento and self.tipodocumento:
+            tipo = self.tipodocumento.nombre.upper()
+            doc = self.documento.strip()
+
+            # DNI: 8 dígitos exactos
+            if tipo == 'DNI':
+                if not re.match(r'^\d{8}$', doc):
+                    raise CoreValidationError({
+                        'documento': 'El DNI debe tener exactamente 8 dígitos.'
+                    })
+
+            # Carnet de Extranjería: 9 dígitos
+            elif tipo in ['CE', 'CARNET DE EXTRANJERIA', 'CARNET DE EXTRANJERÍA']:
+                if not re.match(r'^\d{9}$', doc):
+                    raise CoreValidationError({
+                        'documento': 'El Carnet de Extranjería debe tener 9 dígitos.'
+                    })
+
+            # Pasaporte: Alfanumérico, 9-12 caracteres
+            elif tipo == 'PASAPORTE':
+                if not re.match(r'^[A-Z0-9]{9,12}$', doc.upper()):
+                    raise CoreValidationError({
+                        'documento': 'El Pasaporte debe tener entre 9 y 12 caracteres alfanuméricos.'
+                    })
+
+            # RUC: 11 dígitos
+            elif tipo == 'RUC':
+                if not re.match(r'^\d{11}$', doc):
+                    raise CoreValidationError({
+                        'documento': 'El RUC debe tener exactamente 11 dígitos.'
+                    })
+
+    def save(self, *args, **kwargs):
+        """
+        Guardar modelo.
+        NOTA: La validación se hace en el serializer con validate(), no aquí.
+        Llamar full_clean() aquí causa errores 500 en lugar de 400.
+        """
+        super().save(*args, **kwargs)
     
 class Veterinario(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -158,10 +217,9 @@ class Responsable(models.Model):
     email = models.EmailField(
         max_length=254,
         unique=True,
-        null=True,
-        blank=True,
-        help_text="Email del responsable",
-        db_index=True  # Index para búsquedas rápidas
+        help_text="Email del responsable (para contacto)",
+        db_index=True,
+        default='sin_email@temp.com'  # Temporal para migración
     )
     telefono = models.CharField(max_length=20)
     direccion = models.CharField(max_length=255)
@@ -169,13 +227,67 @@ class Responsable(models.Model):
     documento = models.CharField(max_length=20)
     tipodocumento = models.ForeignKey(TipoDocumento, on_delete=models.CASCADE, related_name='responsables')
     emergencia = models.CharField(max_length=100, blank=True, null=True)
-    usuario = models.OneToOneField(Usuario, on_delete=models.CASCADE, related_name='responsable')
+    # ❌ CAMPO ELIMINADO: usuario (Responsable NO tiene acceso al sistema)
 
     class Meta:
         ordering = ['nombres']
+        constraints = [
+            # Documento único por tipo de documento
+            models.UniqueConstraint(
+                fields=['tipodocumento', 'documento'],
+                name='unique_responsable_documento',
+                violation_error_message='Ya existe un responsable con este documento.'
+            ),
+        ]
 
     def __str__(self):
         return f"{self.nombres} {self.apellidos}"
+
+    def clean(self):
+        """
+        Validación de documento según tipo (Perú)
+        """
+        super().clean()
+
+        if self.documento and self.tipodocumento:
+            tipo = self.tipodocumento.nombre.upper()
+            doc = self.documento.strip()
+
+            # DNI: 8 dígitos exactos
+            if tipo == 'DNI':
+                if not re.match(r'^\d{8}$', doc):
+                    raise CoreValidationError({
+                        'documento': 'El DNI debe tener exactamente 8 dígitos.'
+                    })
+
+            # Carnet de Extranjería: 9 dígitos
+            elif tipo in ['CE', 'CARNET DE EXTRANJERIA', 'CARNET DE EXTRANJERÍA']:
+                if not re.match(r'^\d{9}$', doc):
+                    raise CoreValidationError({
+                        'documento': 'El Carnet de Extranjería debe tener 9 dígitos.'
+                    })
+
+            # Pasaporte: Alfanumérico, 9-12 caracteres
+            elif tipo == 'PASAPORTE':
+                if not re.match(r'^[A-Z0-9]{9,12}$', doc.upper()):
+                    raise CoreValidationError({
+                        'documento': 'El Pasaporte debe tener entre 9 y 12 caracteres alfanuméricos.'
+                    })
+
+            # RUC: 11 dígitos
+            elif tipo == 'RUC':
+                if not re.match(r'^\d{11}$', doc):
+                    raise CoreValidationError({
+                        'documento': 'El RUC debe tener exactamente 11 dígitos.'
+                    })
+
+    def save(self, *args, **kwargs):
+        """
+        Guardar modelo.
+        NOTA: La validación se hace en el serializer con validate(), no aquí.
+        Llamar full_clean() aquí causa errores 500 en lugar de 400.
+        """
+        super().save(*args, **kwargs)
 
 # Validador de seguridad para nombres
 def validate_safe_name(value):
