@@ -174,8 +174,24 @@ class TrabajadorViewSet(viewsets.ModelViewSet):
     serializer_class = TrabajadorSerializer
     
     def get_queryset(self):
-        # Por defecto devuelve todos los trabajadores (activos e inactivos)
-        return Trabajador.objects.all()
+        """
+        Filtra trabajadores por query params:
+        - ?rol=veterinario : Filtra por rol
+        - ?estado=activo : Filtra por estado
+        """
+        queryset = Trabajador.objects.all()
+
+        # Filtrar por rol si se proporciona
+        rol = self.request.query_params.get('rol', None)
+        if rol:
+            queryset = queryset.filter(usuario__rol__iexact=rol)
+
+        # Filtrar por estado si se proporciona
+        estado = self.request.query_params.get('estado', None)
+        if estado:
+            queryset = queryset.filter(estado__iexact=estado)
+
+        return queryset
 
     # 🆕 NUEVA ACCIÓN: Desactivar trabajador
     @action(detail=True, methods=['patch'], url_path='desactivar')
@@ -245,8 +261,8 @@ class TrabajadorViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'], url_path='veterinarios')
     def veterinarios(self, request):
-        # Solo veterinarios activos
-        veterinarios = Trabajador.objects.filter(usuario__rol__iexact='Veterinario', estado__iexact='activo')
+        # Solo veterinarios activos (ahora usa 'veterinario' en minúscula)
+        veterinarios = Trabajador.objects.filter(usuario__rol='veterinario', estado__iexact='activo')
         serializer = self.get_serializer(veterinarios, many=True)
         return Response(serializer.data)
 
