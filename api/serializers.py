@@ -723,15 +723,22 @@ class HorarioTrabajoSerializer(serializers.ModelSerializer):
     veterinario_nombre = serializers.CharField(source='veterinario.__str__', read_only=True)
     dia_display = serializers.CharField(source='get_dia_semana_display', read_only=True)
     duracion_jornada = serializers.SerializerMethodField(read_only=True)
+    tiene_descanso = serializers.SerializerMethodField()
 
     class Meta:
         model = HorarioTrabajo
         fields = [
             'id', 'veterinario', 'veterinario_nombre', 'dia_semana', 'dia_display',
-            'hora_inicio', 'hora_fin', 'hora_inicio_descanso', 'hora_fin_descanso',
+            'hora_inicio', 'hora_fin', 'tiene_descanso', 'hora_inicio_descanso', 'hora_fin_descanso',
             'duracion_jornada', 'activo'
         ]
         read_only_fields = ['id']
+
+    def get_tiene_descanso(self, obj):
+        """
+        Devuelve true si hay un horario de descanso válido.
+        """
+        return obj.hora_inicio_descanso is not None and obj.hora_fin_descanso is not None
 
     def get_duracion_jornada(self, obj):
         """Calcula la duración total de la jornada en horas"""
