@@ -184,6 +184,7 @@ class TrabajadorViewSet(viewsets.ModelViewSet):
         # Filtrar por rol si se proporciona
         rol = self.request.query_params.get('rol', None)
         if rol:
+            # Normalizar el rol a mayúscula inicial para que coincida con los datos de la BD
             queryset = queryset.filter(usuario__rol__iexact=rol)
 
         # Filtrar por estado si se proporciona
@@ -242,23 +243,6 @@ class TrabajadorViewSet(viewsets.ModelViewSet):
 
         return Response({'mensaje': 'Contraseña actualizada correctamente'}, status=status.HTTP_200_OK)
 
-    @action(detail=True, methods=['put'], url_path='editar')
-    def edit_trabajador(self, request, pk=None):
-        trabajador = self.get_object()
-        serializer = TrabajadorSerializer(trabajador, data=request.data, partial=False)
-
-        if serializer.is_valid():
-            usuario_data = serializer.validated_data.get('usuario', None)
-            if usuario_data and usuario_data.get('email'):
-                email = usuario_data['email']
-                if Usuario.objects.filter(email=email).exclude(id=trabajador.usuario.id).exists():
-                    return Response({'error': 'El correo electrónico ya está en uso.'}, status=status.HTTP_400_BAD_REQUEST)
-
-            serializer.save()
-            return Response(serializer.data, status=status.HTTP_200_OK)
-        else:
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
     @action(detail=False, methods=['get'], url_path='veterinarios')
     def veterinarios(self, request):
         # Solo veterinarios activos (ahora usa 'veterinario' en minúscula)
@@ -275,6 +259,11 @@ class TrabajadorViewSet(viewsets.ModelViewSet):
 class VeterinarioViewSet(viewsets.ModelViewSet):
     queryset = Veterinario.objects.all()
     serializer_class = VeterinarioSerializer
+
+    def get_queryset(self):
+        return Veterinario.objects.select_related(
+            'trabajador__usuario', 'especialidad'
+        ).prefetch_related('horarios_trabajo')
 
     # ENDPOINT ELIMINADO: asignar-dias
     # Ya no es necesario porque dias_trabajo se genera automáticamente desde horarios_trabajo.
