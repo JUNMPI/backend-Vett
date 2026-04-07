@@ -453,8 +453,34 @@ class ProductoSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Producto
-        fields = ['id', 'nombre', 'descripcion', 'proveedor', 
-                  'tipo', 'subtipo','stock','precio_compra','precio_venta','fecha_vencimiento','estado']
+        fields = ['id', 'nombre', 'descripcion', 'proveedor',
+                  'tipo', 'subtipo', 'stock', 'precio_compra', 'precio_venta', 'fecha_vencimiento', 'estado']
+
+    def validate_precio_venta(self, value):
+        if value is not None and value < 0:
+            raise serializers.ValidationError('El precio de venta no puede ser negativo.')
+        return value
+
+    def validate_precio_compra(self, value):
+        if value is not None and value < 0:
+            raise serializers.ValidationError('El precio de compra no puede ser negativo.')
+        return value
+
+    def validate_fecha_vencimiento(self, value):
+        if value is not None:
+            from datetime import date
+            if value < date.today():
+                raise serializers.ValidationError('La fecha de vencimiento no puede ser una fecha pasada.')
+        return value
+
+    def validate(self, data):
+        precio_compra = data.get('precio_compra') or (self.instance.precio_compra if self.instance else None)
+        precio_venta = data.get('precio_venta') or (self.instance.precio_venta if self.instance else None)
+        if precio_compra is not None and precio_venta is not None and precio_compra > precio_venta:
+            raise serializers.ValidationError({
+                'precio_compra': 'El precio de compra no puede ser mayor al precio de venta.'
+            })
+        return data
 
 
 class CitaSerializer(serializers.ModelSerializer):

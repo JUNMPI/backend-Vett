@@ -3,7 +3,7 @@ from rest_framework.decorators import action, api_view
 from rest_framework.response import Response
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework.views import APIView
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 
 from django.shortcuts import get_object_or_404
 from django.db import transaction, IntegrityError
@@ -333,10 +333,30 @@ class ServicioViewSet(viewsets.ModelViewSet):
 class ProductoViewSet(viewsets.ModelViewSet):
     queryset = Producto.objects.all()
     serializer_class = ProductoSerializer
+    permission_classes = [IsAuthenticated]
 
-    # Devuelve todos los productos (activos e inactivos) para que los endpoints individuales funcionen
     def get_queryset(self):
-        return Producto.objects.all()
+        qs = Producto.objects.all()
+        params = self.request.query_params
+
+        tipo = params.get('tipo')
+        if tipo:
+            qs = qs.filter(tipo__iexact=tipo)
+
+        estado = params.get('estado')
+        if estado:
+            qs = qs.filter(estado__iexact=estado)
+
+        search = params.get('search')
+        if search:
+            qs = qs.filter(
+                Q(nombre__icontains=search) |
+                Q(descripcion__icontains=search) |
+                Q(proveedor__icontains=search) |
+                Q(subtipo__icontains=search)
+            )
+
+        return qs
 
     # Desactiva un producto (cambia su estado a INACTIVO)
     @action(detail=True, methods=['patch'])
@@ -1180,6 +1200,7 @@ class CitaViewSet(viewsets.ModelViewSet):
 
 class LoginView(TokenObtainPairView):
     serializer_class = CustomTokenObtainPairSerializer
+    permission_classes = [AllowAny]
     
 class RegistrarTrabajadorView(APIView):
     permission_classes = [AllowAny]
