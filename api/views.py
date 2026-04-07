@@ -261,9 +261,13 @@ class VeterinarioViewSet(viewsets.ModelViewSet):
     serializer_class = VeterinarioSerializer
 
     def get_queryset(self):
+        # Solo veterinarios de trabajadores activos con rol veterinario
         return Veterinario.objects.select_related(
             'trabajador__usuario', 'especialidad'
-        ).prefetch_related('horarios_trabajo')
+        ).prefetch_related('horarios_trabajo').filter(
+            trabajador__usuario__rol__iexact='veterinario',
+            trabajador__estado__iexact='activo'
+        )
 
     # ENDPOINT ELIMINADO: asignar-dias
     # Ya no es necesario porque dias_trabajo se genera automáticamente desde horarios_trabajo.
