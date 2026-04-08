@@ -7,7 +7,7 @@ from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 class CapitalizedChoiceField(serializers.ChoiceField):
     def to_internal_value(self, data):
         if isinstance(data, str):
-            data = data.capitalize()
+            data = data.lower()
         return super().to_internal_value(data)
 
 class EspecialidadSerializer(serializers.ModelSerializer):
@@ -28,9 +28,8 @@ class TipoDocumentoSerializer(serializers.ModelSerializer):
 
 
 class UsuarioSerializer(serializers.ModelSerializer):
-    from .models import Rol as UsuarioModelRol
     password = serializers.CharField(write_only=True, required=False)
-    rol = CapitalizedChoiceField(choices=UsuarioModelRol.choices)
+    rol = CapitalizedChoiceField(choices=Rol.ROL_CHOICES)
 
     class Meta:
         model = Usuario
@@ -148,9 +147,9 @@ class TrabajadorSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         usuario_data = validated_data.pop('usuario')
 
-        # Normalizar el rol a mayúscula inicial antes de la validación
+        # Normalizar el rol a minúsculas antes de la validación
         if 'rol' in usuario_data and isinstance(usuario_data['rol'], str):
-            usuario_data['rol'] = usuario_data['rol'].capitalize()
+            usuario_data['rol'] = usuario_data['rol'].lower()
 
         usuario_serializer = UsuarioSerializer(data=usuario_data)
         usuario_serializer.is_valid(raise_exception=True)
@@ -163,9 +162,9 @@ class TrabajadorSerializer(serializers.ModelSerializer):
         usuario_data = validated_data.pop('usuario', None)
 
         if usuario_data:
-            # Normalizar el rol a mayúscula inicial antes de la validación
+            # Normalizar el rol a minúsculas antes de la validación
             if 'rol' in usuario_data and isinstance(usuario_data['rol'], str):
-                usuario_data['rol'] = usuario_data['rol'].capitalize()
+                usuario_data['rol'] = usuario_data['rol'].lower()
 
             usuario_serializer = UsuarioSerializer(
                 instance.usuario,

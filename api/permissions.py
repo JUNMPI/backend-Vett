@@ -142,7 +142,8 @@ class EsAdministrador(permissions.BasePermission):
     message = "Solo administradores pueden realizar esta acción"
 
     def has_permission(self, request, view):
-        return request.user and request.user.is_authenticated and request.user.rol == Rol.ADMINISTRADOR
+        return (request.user and request.user.is_authenticated
+                and (request.user.rol or '').lower() == Rol.ADMINISTRADOR)
 
 
 class EsVeterinario(permissions.BasePermission):
@@ -152,7 +153,8 @@ class EsVeterinario(permissions.BasePermission):
     message = "Solo veterinarios pueden realizar esta acción"
 
     def has_permission(self, request, view):
-        return request.user and request.user.is_authenticated and request.user.rol in [Rol.VETERINARIO, Rol.ADMINISTRADOR]
+        rol = (request.user.rol or '').lower() if request.user and request.user.is_authenticated else ''
+        return rol in [Rol.VETERINARIO, Rol.ADMINISTRADOR]
 
 
 class EsRecepcionista(permissions.BasePermission):
@@ -162,7 +164,8 @@ class EsRecepcionista(permissions.BasePermission):
     message = "Solo recepcionistas pueden realizar esta acción"
 
     def has_permission(self, request, view):
-        return request.user and request.user.is_authenticated and request.user.rol in [Rol.RECEPCIONISTA, Rol.ADMINISTRADOR]
+        rol = (request.user.rol or '').lower() if request.user and request.user.is_authenticated else ''
+        return rol in [Rol.RECEPCIONISTA, Rol.ADMINISTRADOR]
 
 
 class PuedeGestionarCitas(permissions.BasePermission):
@@ -175,12 +178,14 @@ class PuedeGestionarCitas(permissions.BasePermission):
         if not request.user or not request.user.is_authenticated:
             return False
 
+        rol = (request.user.rol or '').lower()
+
         # Administrador tiene todos los permisos
-        if request.user.rol == Rol.ADMINISTRADOR:
+        if rol == Rol.ADMINISTRADOR:
             return True
 
         # Recepcionista puede gestionar citas
-        if request.user.rol == Rol.RECEPCIONISTA:
+        if rol == Rol.RECEPCIONISTA:
             # GET siempre permitido
             if request.method in permissions.SAFE_METHODS:
                 return True
@@ -188,7 +193,7 @@ class PuedeGestionarCitas(permissions.BasePermission):
             return True
 
         # Veterinario solo puede ver sus propias citas
-        if request.user.rol == Rol.VETERINARIO:
+        if rol == Rol.VETERINARIO:
             return request.method in permissions.SAFE_METHODS
 
         return False
@@ -223,17 +228,20 @@ def make_permiso_api(modulo_nombre):
             if not request.user or not request.user.is_authenticated:
                 return False
 
+            # Normalizar rol a minúsculas para comparación consistente
+            rol_usuario = request.user.rol.lower() if request.user.rol else ''
+
             # Administrador tiene acceso total
-            if request.user.rol == Rol.ADMINISTRADOR:
+            if rol_usuario == Rol.ADMINISTRADOR:
                 return True
 
             accion = ACCION_MAP.get(request.method, 'ver')
 
-            # Consultar PermisoRol en BD (prioridad sobre dict hardcodeado)
+            # Consultar PermisoRol en BD (case-insensitive, prioridad sobre dict)
             try:
                 from .models import PermisoRol as PermisoRolModel
                 permiso = PermisoRolModel.objects.filter(
-                    rol=request.user.rol,
+                    rol__iexact=request.user.rol,
                     modulo=self.modulo
                 ).first()
 
@@ -242,25 +250,13 @@ def make_permiso_api(modulo_nombre):
             except Exception:
                 pass
 
-            # Fallback al diccionario hardcodeado
-            permisos_rol = PermisosPorRol.PERMISOS.get(request.user.rol, {})
+            # Fallback al diccionario hardcodeado (claves en minúsculas)
+            permisos_rol = PermisosPorRol.PERMISOS.get(rol_usuario, {})
             permisos_modulo = permisos_rol.get(self.modulo, {})
             return permisos_modulo.get(accion, False)
 
     _PermisoRolAPI.__name__ = f'PermisoRolAPI_{modulo_nombre}'
     return _PermisoRolAPI
-
-
-class EsAdministrador(permissions.BasePermission):
-    """Solo el rol administrador puede acceder."""
-    message = "Solo los administradores pueden realizar esta acción."
-
-    def has_permission(self, request, view):
-        return (
-            request.user
-            and request.user.is_authenticated
-            and request.user.rol == Rol.ADMINISTRADOR
-        )
 
 
 class PuedeAplicarVacunas(permissions.BasePermission):
@@ -270,4 +266,5 @@ class PuedeAplicarVacunas(permissions.BasePermission):
     message = "Solo veterinarios pueden aplicar vacunas"
 
     def has_permission(self, request, view):
-        return request.user and request.user.is_authenticated and request.user.rol in [Rol.VETERINARIO, Rol.ADMINISTRADOR]
+        rol = (request.user.rol or '').lower() if request.user and request.user.is_authenticated else ''
+        return rol in [Rol.VETERINARIO, Rol.ADMINISTRADOR]
