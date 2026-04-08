@@ -4,6 +4,7 @@ from rest_framework.response import Response
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
+from .permissions import make_permiso_api, EsAdministrador
 
 from django.shortcuts import get_object_or_404
 from django.db import transaction, IntegrityError
@@ -45,9 +46,9 @@ from .serializers import (
 
 # ViewSet for Especialidad
 class EspecialidadViewSet(viewsets.ModelViewSet):
-    # Definimos el queryset de manera explícita aquí
     queryset = Especialidad.objects.all()
     serializer_class = EspecialidadSerializer
+    permission_classes = [make_permiso_api('configuracion')]
 
     # Método que filtra las especialidades activas
     def get_queryset(self):
@@ -93,8 +94,9 @@ class EspecialidadViewSet(viewsets.ModelViewSet):
 
 # ViewSet for Consultorio
 class ConsultorioViewSet(viewsets.ModelViewSet):
-    queryset = Consultorio.objects.all()  # <- Esto es importante
+    queryset = Consultorio.objects.all()
     serializer_class = ConsultorioSerializer
+    permission_classes = [make_permiso_api('configuracion')]
 
     def get_queryset(self):
         # Solo consultorios abiertos
@@ -131,6 +133,7 @@ class ConsultorioViewSet(viewsets.ModelViewSet):
 class TipoDocumentoViewSet(viewsets.ModelViewSet):
     queryset = TipoDocumento.objects.all()
     serializer_class = TipoDocumentoSerializer
+    permission_classes = [make_permiso_api('configuracion')]
     def get_queryset(self):
             # Solo devuelve tipos de documento cuyo estado sea 'ACTIVO'
         return TipoDocumento.objects.all()
@@ -172,7 +175,8 @@ class TipoDocumentoViewSet(viewsets.ModelViewSet):
 class TrabajadorViewSet(viewsets.ModelViewSet):
     queryset = Trabajador.objects.all()
     serializer_class = TrabajadorSerializer
-    
+    permission_classes = [make_permiso_api('trabajadores')]
+
     def get_queryset(self):
         """
         Filtra trabajadores por query params:
@@ -259,6 +263,7 @@ class TrabajadorViewSet(viewsets.ModelViewSet):
 class VeterinarioViewSet(viewsets.ModelViewSet):
     queryset = Veterinario.objects.all()
     serializer_class = VeterinarioSerializer
+    permission_classes = [make_permiso_api('trabajadores')]
 
     def get_queryset(self):
         # Solo veterinarios de trabajadores activos con rol veterinario
@@ -284,6 +289,7 @@ class VeterinarioViewSet(viewsets.ModelViewSet):
 class ServicioViewSet(viewsets.ModelViewSet):
     queryset = Servicio.objects.all()
     serializer_class = ServicioSerializer
+    permission_classes = [make_permiso_api('servicios')]
 
     # Filtra servicios activos por defecto y permite filtrar por categoría
     def get_queryset(self):
@@ -333,7 +339,7 @@ class ServicioViewSet(viewsets.ModelViewSet):
 class ProductoViewSet(viewsets.ModelViewSet):
     queryset = Producto.objects.all()
     serializer_class = ProductoSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [make_permiso_api('productos')]
 
     def get_queryset(self):
         qs = Producto.objects.all()
@@ -426,6 +432,7 @@ class ProductoViewSet(viewsets.ModelViewSet):
 class MascotaViewSet(viewsets.ModelViewSet):
     queryset = Mascota.objects.all()
     serializer_class = MascotaSerializer
+    permission_classes = [make_permiso_api('mascotas')]
 
     def create(self, request, *args, **kwargs):
         """
@@ -530,6 +537,7 @@ class MascotaViewSet(viewsets.ModelViewSet):
 class ResponsableViewSet(viewsets.ModelViewSet):
     queryset = Responsable.objects.all()
     serializer_class = ResponsableSerializer
+    permission_classes = [make_permiso_api('mascotas')]
 
 
 class CitaViewSet(viewsets.ModelViewSet):
@@ -541,6 +549,7 @@ class CitaViewSet(viewsets.ModelViewSet):
     """
     queryset = Cita.objects.all()
     serializer_class = CitaSerializer
+    permission_classes = [make_permiso_api('citas')]
 
     def get_queryset(self):
         """
@@ -1224,6 +1233,7 @@ class VacunaViewSet(viewsets.ModelViewSet):
     """
     queryset = Vacuna.objects.all()
     serializer_class = VacunaSerializer
+    permission_classes = [make_permiso_api('vacunas')]
     
     def get_queryset(self):
         queryset = Vacuna.objects.all()
@@ -2257,6 +2267,7 @@ class HistorialVacunacionViewSet(viewsets.ModelViewSet):
     """
     queryset = HistorialVacunacion.objects.all()
     serializer_class = HistorialVacunacionSerializer
+    permission_classes = [make_permiso_api('vacunas')]
     
     def calcular_proxima_fecha(self, vacuna, fecha_aplicacion, dosis_numero):
         """
@@ -2729,6 +2740,7 @@ class HistorialMedicoViewSet(viewsets.ModelViewSet):
     """
     queryset = HistorialMedico.objects.all()
     serializer_class = HistorialMedicoSerializer
+    permission_classes = [make_permiso_api('historial_clinico')]
     
     def get_queryset(self):
         mascota_id = self.request.query_params.get('mascota_id')
@@ -2784,6 +2796,7 @@ class HorarioTrabajoViewSet(viewsets.ModelViewSet):
     """
     queryset = HorarioTrabajo.objects.all()
     serializer_class = HorarioTrabajoSerializer
+    permission_classes = [make_permiso_api('trabajadores')]
     filterset_fields = ['veterinario', 'dia_semana', 'activo']
     ordering_fields = ['veterinario', 'dia_semana', 'hora_inicio']
     ordering = ['veterinario', 'dia_semana']
@@ -2880,6 +2893,7 @@ class SlotTiempoViewSet(viewsets.ModelViewSet):
     Principalmente para consulta y generación automática
     """
     queryset = SlotTiempo.objects.all()
+    permission_classes = [make_permiso_api('citas')]
     serializer_class = SlotTiempoSerializer
     filterset_fields = ['veterinario', 'fecha', 'disponible']
     ordering_fields = ['fecha', 'hora_inicio', 'veterinario']
@@ -3267,6 +3281,7 @@ class CitaProfesionalViewSet(viewsets.ModelViewSet):
     Incluye funcionalidades avanzadas como conflictos, recordatorios, etc.
     """
     queryset = Cita.objects.all()
+    permission_classes = [make_permiso_api('citas')]
     serializer_class = CitaProfesionalSerializer
     filterset_fields = ['veterinario', 'estado', 'fecha']
     ordering_fields = ['fecha', 'hora', 'fecha_creacion']
@@ -3557,7 +3572,7 @@ class PermisoRolViewSet(viewsets.ModelViewSet):
     """
     queryset = PermisoRol.objects.all()
     serializer_class = PermisoRolSerializer
-    # permission_classes = [EsAdministrador]  # Solo admin puede gestionar permisos
+    permission_classes = [EsAdministrador]
 
     def get_queryset(self):
         """

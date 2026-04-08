@@ -194,6 +194,75 @@ class PuedeGestionarCitas(permissions.BasePermission):
         return False
 
 
+def make_permiso_api(modulo_nombre):
+    """
+    Fábrica de clases de permiso por módulo.
+
+    Uso: permission_classes = [make_permiso_api('productos')]
+
+    Mapeo HTTP → acción:
+      GET    → ver
+      POST   → crear
+      PUT    → editar
+      PATCH  → editar
+      DELETE → eliminar
+    """
+    ACCION_MAP = {
+        'GET': 'ver',
+        'POST': 'crear',
+        'PUT': 'editar',
+        'PATCH': 'editar',
+        'DELETE': 'eliminar',
+    }
+
+    class _PermisoRolAPI(permissions.BasePermission):
+        modulo = modulo_nombre
+        message = f"No tienes permiso para realizar esta acción en el módulo '{modulo_nombre}'."
+
+        def has_permission(self, request, view):
+            if not request.user or not request.user.is_authenticated:
+                return False
+
+            # Administrador tiene acceso total
+            if request.user.rol == Rol.ADMINISTRADOR:
+                return True
+
+            accion = ACCION_MAP.get(request.method, 'ver')
+
+            # Consultar PermisoRol en BD (prioridad sobre dict hardcodeado)
+            try:
+                from .models import PermisoRol as PermisoRolModel
+                permiso = PermisoRolModel.objects.filter(
+                    rol=request.user.rol,
+                    modulo=self.modulo
+                ).first()
+
+                if permiso:
+                    return permiso.permisos.get(accion, False)
+            except Exception:
+                pass
+
+            # Fallback al diccionario hardcodeado
+            permisos_rol = PermisosPorRol.PERMISOS.get(request.user.rol, {})
+            permisos_modulo = permisos_rol.get(self.modulo, {})
+            return permisos_modulo.get(accion, False)
+
+    _PermisoRolAPI.__name__ = f'PermisoRolAPI_{modulo_nombre}'
+    return _PermisoRolAPI
+
+
+class EsAdministrador(permissions.BasePermission):
+    """Solo el rol administrador puede acceder."""
+    message = "Solo los administradores pueden realizar esta acción."
+
+    def has_permission(self, request, view):
+        return (
+            request.user
+            and request.user.is_authenticated
+            and request.user.rol == Rol.ADMINISTRADOR
+        )
+
+
 class PuedeAplicarVacunas(permissions.BasePermission):
     """
     Permiso: Puede aplicar vacunas (veterinario o admin)
