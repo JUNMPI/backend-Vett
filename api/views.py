@@ -3661,64 +3661,44 @@ class PermisoRolViewSet(viewsets.ModelViewSet):
                 'descripcion': 'Panel principal con estadísticas',
                 'acciones': ['ver']
             },
-            'citas': {
-                'nombre': 'Citas',
-                'descripcion': 'Gestión de citas veterinarias',
-                'acciones': ['ver', 'crear', 'editar', 'eliminar', 'calendario_general', 'mi_calendario']
-            },
             'mascotas': {
                 'nombre': 'Mascotas',
-                'descripcion': 'Gestión de mascotas',
+                'descripcion': 'Gestión de mascotas y sus dueños',
                 'acciones': ['ver', 'crear', 'editar', 'eliminar']
-            },
-            'responsables': {
-                'nombre': 'Clientes',
-                'descripcion': 'Gestión de dueños de mascotas',
-                'acciones': ['ver', 'crear', 'editar', 'eliminar']
-            },
-            'vacunas': {
-                'nombre': 'Vacunación',
-                'descripcion': 'Sistema de vacunación',
-                'acciones': ['ver', 'crear', 'editar', 'eliminar', 'aplicar', 'historial']
             },
             'historial_clinico': {
                 'nombre': 'Historial Clínico',
                 'descripcion': 'Historial médico de mascotas',
                 'acciones': ['ver', 'crear', 'editar']
             },
+            'citas': {
+                'nombre': 'Citas',
+                'descripcion': 'Gestión de citas veterinarias',
+                'acciones': ['ver', 'crear', 'editar', 'eliminar', 'calendario_general', 'mi_calendario']
+            },
+            'vacunas': {
+                'nombre': 'Vacunación',
+                'descripcion': 'Gestión de vacunas y aplicación a mascotas',
+                'acciones': ['ver', 'crear', 'editar', 'eliminar', 'aplicar', 'historial']
+            },
+            'trabajadores': {
+                'nombre': 'Trabajadores',
+                'descripcion': 'Personal de la clínica (incluye veterinarios)',
+                'acciones': ['ver', 'crear', 'editar', 'eliminar']
+            },
+            'productos': {
+                'nombre': 'Inventario / Productos',
+                'descripcion': 'Inventario de productos y medicamentos',
+                'acciones': ['ver', 'crear', 'editar', 'eliminar']
+            },
             'servicios': {
                 'nombre': 'Servicios',
                 'descripcion': 'Catálogo de servicios veterinarios',
                 'acciones': ['ver', 'crear', 'editar', 'eliminar']
             },
-            'productos': {
-                'nombre': 'Productos',
-                'descripcion': 'Inventario de productos',
-                'acciones': ['ver', 'crear', 'editar', 'eliminar']
-            },
-            'usuarios': {
-                'nombre': 'Usuarios',
-                'descripcion': 'Gestión de usuarios del sistema',
-                'acciones': ['ver', 'crear', 'editar', 'eliminar']
-            },
-            'trabajadores': {
-                'nombre': 'Trabajadores',
-                'descripcion': 'Gestión de trabajadores',
-                'acciones': ['ver', 'crear', 'editar', 'eliminar']
-            },
-            'veterinarios': {
-                'nombre': 'Veterinarios',
-                'descripcion': 'Gestión de veterinarios',
-                'acciones': ['ver', 'crear', 'editar', 'eliminar', 'horarios', 'slots']
-            },
-            'reportes': {
-                'nombre': 'Reportes',
-                'descripcion': 'Generación de reportes',
-                'acciones': ['ver', 'generar']
-            },
             'configuracion': {
                 'nombre': 'Configuración',
-                'descripcion': 'Configuración del sistema',
+                'descripcion': 'Consultorios, especialidades y ajustes del sistema',
                 'acciones': ['ver', 'editar']
             }
         }

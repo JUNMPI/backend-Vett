@@ -19,314 +19,57 @@ class PermisosPorRol:
     - eliminar: Eliminar/desactivar registros
     """
 
+    # Módulos reales del sistema (basados en el menú de navegación):
+    # dashboard, mascotas, historial_clinico, citas, vacunas,
+    # trabajadores (incluye veterinarios), productos, servicios, configuracion
+
     PERMISOS = {
         Rol.ADMINISTRADOR: {
-            # Dashboard
-            'dashboard': {'ver': True},
-
-            # Gestión de Citas
-            'citas': {
-                'ver': True,
-                'crear': True,
-                'editar': True,
-                'eliminar': True,
-                'calendario_general': True,  # Ve todos los veterinarios
-                'mi_calendario': True,
-            },
-
-            # Gestión de Mascotas
-            'mascotas': {
-                'ver': True,
-                'crear': True,
-                'editar': True,
-                'eliminar': True,
-            },
-
-            # Gestión de Responsables
-            'responsables': {
-                'ver': True,
-                'crear': True,
-                'editar': True,
-                'eliminar': True,
-            },
-
-            # Vacunación
-            'vacunas': {
-                'ver': True,
-                'crear': True,
-                'editar': True,
-                'eliminar': True,
-                'aplicar': True,
-                'historial': True,
-            },
-
-            # Historial Clínico
-            'historial_clinico': {
-                'ver': True,
-                'crear': True,
-                'editar': True,
-            },
-
-            # Servicios
-            'servicios': {
-                'ver': True,
-                'crear': True,
-                'editar': True,
-                'eliminar': True,
-            },
-
-            # Inventario/Productos
-            'productos': {
-                'ver': True,
-                'crear': True,
-                'editar': True,
-                'eliminar': True,
-            },
-
-            # Usuarios y Trabajadores
-            'usuarios': {
-                'ver': True,
-                'crear': True,
-                'editar': True,
-                'eliminar': True,
-            },
-
-            'trabajadores': {
-                'ver': True,
-                'crear': True,
-                'editar': True,
-                'eliminar': True,
-            },
-
-            # Veterinarios
-            'veterinarios': {
-                'ver': True,
-                'crear': True,
-                'editar': True,
-                'eliminar': True,
-                'horarios': True,  # Gestionar horarios de trabajo
-                'slots': True,     # Generar slots
-            },
-
-            # Reportes
-            'reportes': {
-                'ver': True,
-                'generar': True,
-            },
-
-            # Configuración
-            'configuracion': {
-                'ver': True,
-                'editar': True,
-            },
+            'dashboard':        {'ver': True},
+            'mascotas':         {'ver': True, 'crear': True, 'editar': True, 'eliminar': True},
+            'historial_clinico':{'ver': True, 'crear': True, 'editar': True},
+            'citas':            {'ver': True, 'crear': True, 'editar': True, 'eliminar': True, 'calendario_general': True, 'mi_calendario': True},
+            'vacunas':          {'ver': True, 'crear': True, 'editar': True, 'eliminar': True, 'aplicar': True, 'historial': True},
+            'trabajadores':     {'ver': True, 'crear': True, 'editar': True, 'eliminar': True},
+            'productos':        {'ver': True, 'crear': True, 'editar': True, 'eliminar': True},
+            'servicios':        {'ver': True, 'crear': True, 'editar': True, 'eliminar': True},
+            'configuracion':    {'ver': True, 'editar': True},
         },
 
         Rol.VETERINARIO: {
-            # Dashboard - SOLO ADMIN
-            'dashboard': {'ver': False},
-
-            # Gestión de Citas (solo lectura y sus propias citas)
-            'citas': {
-                'ver': True,
-                'crear': False,  # No crea citas directamente
-                'editar': True,  # Puede completar sus citas
-                'eliminar': False,
-                'calendario_general': False,  # NO ve otros veterinarios
-                'mi_calendario': True,  # Solo ve SUS citas
-            },
-
-            # Gestión de Mascotas (solo lectura)
-            'mascotas': {
-                'ver': True,
-                'crear': False,
-                'editar': False,
-                'eliminar': False,
-            },
-
-            # Gestión de Responsables (solo lectura)
-            'responsables': {
-                'ver': True,
-                'crear': False,
-                'editar': False,
-                'eliminar': False,
-            },
-
-            # Vacunación (COMPLETO)
-            'vacunas': {
-                'ver': True,
-                'crear': False,  # No crea vacunas, solo las aplica
-                'editar': False,
-                'eliminar': False,
-                'aplicar': True,  # SÍ puede aplicar vacunas
-                'historial': True,
-            },
-
-            # Historial Clínico (COMPLETO)
-            'historial_clinico': {
-                'ver': True,
-                'crear': True,  # Puede agregar registros
-                'editar': True,
-            },
-
-            # Servicios (solo lectura)
-            'servicios': {
-                'ver': True,
-                'crear': False,
-                'editar': False,
-                'eliminar': False,
-            },
-
-            # Inventario/Productos (solo lectura)
-            'productos': {
-                'ver': True,
-                'crear': False,
-                'editar': False,
-                'eliminar': False,
-            },
-
-            # NO VE: Usuarios, Trabajadores, Veterinarios
-            'usuarios': {'ver': False},
-            'trabajadores': {'ver': False},
-            'veterinarios': {'ver': False},
-
-            # Reportes (limitado)
-            'reportes': {
-                'ver': True,
-                'generar': False,  # Solo ve, no genera
-            },
-
-            # NO VE: Configuración
-            'configuracion': {'ver': False},
-        },
-
-        Rol.RESPONSABLE: {
-            # RESPONSABLE NO TIENE ACCESO AL SISTEMA
-            # Este rol se usa SOLO para registro interno de dueños de mascotas
-            # No tienen login ni acceso a ningún módulo del sistema
-            'dashboard': {'ver': False},
-            'citas': {'ver': False},
-            'mascotas': {'ver': False},
-            'responsables': {'ver': False},
-            'vacunas': {'ver': False},
-            'historial_clinico': {'ver': False},
-            'servicios': {'ver': False},
-            'productos': {'ver': False},
-            'usuarios': {'ver': False},
-            'trabajadores': {'ver': False},
-            'veterinarios': {'ver': False},
-            'reportes': {'ver': False},
-            'configuracion': {'ver': False},
+            'dashboard':        {'ver': False},
+            'mascotas':         {'ver': True,  'crear': False, 'editar': False, 'eliminar': False},
+            'historial_clinico':{'ver': True,  'crear': True,  'editar': True},
+            'citas':            {'ver': True,  'crear': False, 'editar': True,  'eliminar': False, 'calendario_general': False, 'mi_calendario': True},
+            'vacunas':          {'ver': True,  'crear': False, 'editar': False, 'eliminar': False, 'aplicar': True, 'historial': True},
+            'trabajadores':     {'ver': False},
+            'productos':        {'ver': True,  'crear': False, 'editar': False, 'eliminar': False},
+            'servicios':        {'ver': True,  'crear': False, 'editar': False, 'eliminar': False},
+            'configuracion':    {'ver': False, 'editar': False},
         },
 
         Rol.RECEPCIONISTA: {
-            # Dashboard - SOLO ADMIN
-            'dashboard': {'ver': False},
-
-            # Gestión de Citas (COMPLETO)
-            'citas': {
-                'ver': True,
-                'crear': True,  # SÍ crea citas
-                'editar': True,  # Puede reprogramar
-                'eliminar': True,  # Puede cancelar
-                'calendario_general': True,  # Ve TODOS los veterinarios
-                'mi_calendario': False,
-            },
-
-            # Gestión de Mascotas (COMPLETO)
-            'mascotas': {
-                'ver': True,
-                'crear': True,
-                'editar': True,
-                'eliminar': True,
-            },
-
-            # Gestión de Responsables (COMPLETO)
-            'responsables': {
-                'ver': True,
-                'crear': True,
-                'editar': True,
-                'eliminar': True,
-            },
-
-            # Vacunación (solo lectura)
-            'vacunas': {
-                'ver': True,
-                'crear': False,
-                'editar': False,
-                'eliminar': False,
-                'aplicar': False,  # NO aplica vacunas
-                'historial': True,  # Puede ver historial
-            },
-
-            # Historial Clínico (solo lectura)
-            'historial_clinico': {
-                'ver': True,
-                'crear': False,
-                'editar': False,
-            },
-
-            # Servicios (solo lectura)
-            'servicios': {
-                'ver': True,
-                'crear': False,
-                'editar': False,
-                'eliminar': False,
-            },
-
-            # Inventario/Productos (solo lectura)
-            'productos': {
-                'ver': True,
-                'crear': False,
-                'editar': False,
-                'eliminar': False,
-            },
-
-            # NO VE: Usuarios, Trabajadores, Veterinarios
-            'usuarios': {'ver': False},
-            'trabajadores': {'ver': False},
-            'veterinarios': {'ver': False},
-
-            # NO VE: Reportes
-            'reportes': {'ver': False},
-
-            # NO VE: Configuración
-            'configuracion': {'ver': False},
+            'dashboard':        {'ver': False},
+            'mascotas':         {'ver': True,  'crear': True,  'editar': True,  'eliminar': True},
+            'historial_clinico':{'ver': True,  'crear': False, 'editar': False},
+            'citas':            {'ver': True,  'crear': True,  'editar': True,  'eliminar': True,  'calendario_general': True, 'mi_calendario': False},
+            'vacunas':          {'ver': True,  'crear': False, 'editar': False, 'eliminar': False, 'aplicar': False, 'historial': True},
+            'trabajadores':     {'ver': False},
+            'productos':        {'ver': True,  'crear': False, 'editar': False, 'eliminar': False},
+            'servicios':        {'ver': True,  'crear': False, 'editar': False, 'eliminar': False},
+            'configuracion':    {'ver': False, 'editar': False},
         },
 
         Rol.INVENTARIO: {
-            'dashboard': {'ver': False},
-
-            # NO VE: Citas
-            'citas': {'ver': False, 'crear': False, 'editar': False, 'eliminar': False, 'calendario_general': False, 'mi_calendario': False},
-
-            # Mascotas (solo lectura)
-            'mascotas': {'ver': True, 'crear': False, 'editar': False, 'eliminar': False},
-
-            # Responsables (solo lectura)
-            'responsables': {'ver': True, 'crear': False, 'editar': False, 'eliminar': False},
-
-            # Vacunas (solo lectura)
-            'vacunas': {'ver': True, 'crear': False, 'editar': False, 'eliminar': False, 'aplicar': False, 'historial': False},
-
-            # Historial clínico (no accede)
-            'historial_clinico': {'ver': False, 'crear': False, 'editar': False},
-
-            # Servicios (solo lectura)
-            'servicios': {'ver': True, 'crear': False, 'editar': False, 'eliminar': False},
-
-            # Productos (COMPLETO — es su módulo principal)
-            'productos': {'ver': True, 'crear': True, 'editar': True, 'eliminar': True},
-
-            # NO VE: Usuarios, Trabajadores, Veterinarios
-            'usuarios': {'ver': False},
-            'trabajadores': {'ver': False},
-            'veterinarios': {'ver': False},
-
-            # Reportes (solo lectura)
-            'reportes': {'ver': True, 'generar': False},
-
-            # NO VE: Configuración
-            'configuracion': {'ver': False},
+            'dashboard':        {'ver': False},
+            'mascotas':         {'ver': True,  'crear': False, 'editar': False, 'eliminar': False},
+            'historial_clinico':{'ver': False, 'crear': False, 'editar': False},
+            'citas':            {'ver': False, 'crear': False, 'editar': False, 'eliminar': False, 'calendario_general': False, 'mi_calendario': False},
+            'vacunas':          {'ver': True,  'crear': False, 'editar': False, 'eliminar': False, 'aplicar': False, 'historial': False},
+            'trabajadores':     {'ver': False},
+            'productos':        {'ver': True,  'crear': True,  'editar': True,  'eliminar': True},
+            'servicios':        {'ver': True,  'crear': False, 'editar': False, 'eliminar': False},
+            'configuracion':    {'ver': False, 'editar': False},
         },
     }
 
