@@ -292,6 +292,42 @@ class PermisosPorRol:
             # NO VE: Configuración
             'configuracion': {'ver': False},
         },
+
+        Rol.INVENTARIO: {
+            'dashboard': {'ver': False},
+
+            # NO VE: Citas
+            'citas': {'ver': False, 'crear': False, 'editar': False, 'eliminar': False, 'calendario_general': False, 'mi_calendario': False},
+
+            # Mascotas (solo lectura)
+            'mascotas': {'ver': True, 'crear': False, 'editar': False, 'eliminar': False},
+
+            # Responsables (solo lectura)
+            'responsables': {'ver': True, 'crear': False, 'editar': False, 'eliminar': False},
+
+            # Vacunas (solo lectura)
+            'vacunas': {'ver': True, 'crear': False, 'editar': False, 'eliminar': False, 'aplicar': False, 'historial': False},
+
+            # Historial clínico (no accede)
+            'historial_clinico': {'ver': False, 'crear': False, 'editar': False},
+
+            # Servicios (solo lectura)
+            'servicios': {'ver': True, 'crear': False, 'editar': False, 'eliminar': False},
+
+            # Productos (COMPLETO — es su módulo principal)
+            'productos': {'ver': True, 'crear': True, 'editar': True, 'eliminar': True},
+
+            # NO VE: Usuarios, Trabajadores, Veterinarios
+            'usuarios': {'ver': False},
+            'trabajadores': {'ver': False},
+            'veterinarios': {'ver': False},
+
+            # Reportes (solo lectura)
+            'reportes': {'ver': True, 'generar': False},
+
+            # NO VE: Configuración
+            'configuracion': {'ver': False},
+        },
     }
 
     @classmethod
