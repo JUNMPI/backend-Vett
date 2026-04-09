@@ -1547,17 +1547,6 @@ class VacunaViewSet(viewsets.ModelViewSet):
         }
         """
         try:
-            # DEBUGGING ESPECIFICO SOLICITADO POR FRONTEND
-            print("DEBUGGING DOSIS RECIBIDO:")
-            print("- dosis_numero:", request.data.get('dosis_numero'))
-            print("- tipo dosis_numero:", type(request.data.get('dosis_numero')))
-            print("- aplicar_protocolo_completo:", request.data.get('aplicar_protocolo_completo'))
-            print("- datos completos:", request.data)
-
-            # Verificar si la validación está fallando en caso específico
-            if request.data.get('dosis_numero') == 9:
-                print("CASO ESPECIFICO DETECTADO: Dosis 9 de 10")
-
             # 🛡️ CORRECCION CRITICA: Manejo seguro de vacunas inexistentes
             try:
                 vacuna = self.get_object()  # Obtener vacuna por ID de la URL
@@ -1645,8 +1634,8 @@ class VacunaViewSet(viewsets.ModelViewSet):
                 'status': 'error'
             }, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
-            # Log del error para debugging
-            print(f"ERROR INESPERADO en aplicar vacuna: {str(e)}")
+            import logging
+            logging.getLogger(__name__).error(f"Error inesperado en aplicar vacuna: {str(e)}", exc_info=True)
             return Response({
                 'success': False,
                 'message': 'Error interno del servidor',
@@ -1670,6 +1659,35 @@ class VacunaViewSet(viewsets.ModelViewSet):
                     'error_code': 'FUTURE_APPLICATION_DATE',
                     'status': 'error'
                 }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Validar compatibilidad de especie
+            try:
+                mascota_proto = Mascota.objects.get(id=data['mascota_id'])
+                if vacuna.especies and mascota_proto.especie not in vacuna.especies:
+                    return Response({
+                        'success': False,
+                        'message': f'La vacuna {vacuna.nombre} no es aplicable a {mascota_proto.especie}. Especies válidas: {", ".join(vacuna.especies)}',
+                        'error_code': 'SPECIES_MISMATCH',
+                        'status': 'error'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+
+                # Validar edad mínima
+                if vacuna.edad_minima_semanas and mascota_proto.fechaNacimiento:
+                    edad_semanas = (fecha_aplicacion - mascota_proto.fechaNacimiento).days / 7
+                    if edad_semanas < vacuna.edad_minima_semanas:
+                        return Response({
+                            'success': False,
+                            'message': f'La mascota tiene {edad_semanas:.1f} semanas y la vacuna {vacuna.nombre} requiere mínimo {vacuna.edad_minima_semanas} semanas de edad.',
+                            'error_code': 'MASCOTA_TOO_YOUNG',
+                            'status': 'error'
+                        }, status=status.HTTP_400_BAD_REQUEST)
+            except Mascota.DoesNotExist:
+                return Response({
+                    'success': False,
+                    'message': 'Mascota no encontrada',
+                    'error_code': 'MASCOTA_NOT_FOUND',
+                    'status': 'error'
+                }, status=status.HTTP_404_NOT_FOUND)
 
             # 🛡️ VALIDACIÓN ANTI-DUPLICADOS PARA PROTOCOLO COMPLETO
             # Verificar si ya existe un protocolo completo de esta vacuna para esta mascota
@@ -1762,11 +1780,8 @@ class VacunaViewSet(viewsets.ModelViewSet):
             })
 
         except Exception as e:
-            # Log detallado del error para debugging
-            print(f"ERROR EN PROTOCOLO COMPLETO: {str(e)}")
-            print(f"TIPO ERROR: {type(e)}")
-            import traceback
-            print(f"TRACEBACK: {traceback.format_exc()}")
+            import logging, traceback
+            logging.getLogger(__name__).error(f"Error en _aplicar_protocolo_completo_integrado: {traceback.format_exc()}")
             return Response({
                 'success': False,
                 'message': f'Error aplicando protocolo completo: {str(e)}',
@@ -1819,8 +1834,37 @@ class VacunaViewSet(viewsets.ModelViewSet):
                 vacuna=vacuna,
                 estado__in=['aplicada', 'vigente', 'completado']
             ).order_by('fecha_aplicacion')
-            
+
             historial_count = historial_previo_query.count()
+
+            # ✅ VALIDACION DE ESPECIE: la mascota debe ser de una especie compatible
+            mascota_para_validar = Mascota.objects.get(id=data['mascota_id'])
+            if vacuna.especies and mascota_para_validar.especie not in vacuna.especies:
+                return Response({
+                    'success': False,
+                    'message': (
+                        f'Vacuna incompatible: "{vacuna.nombre}" es para '
+                        f'{", ".join(vacuna.especies)}, pero la mascota es '
+                        f'{mascota_para_validar.especie}.'
+                    ),
+                    'error_code': 'SPECIES_MISMATCH',
+                    'status': 'error'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # ✅ VALIDACION DE EDAD MINIMA
+            if vacuna.edad_minima_semanas and mascota_para_validar.fechaNacimiento:
+                edad_semanas = (fecha_aplicacion - mascota_para_validar.fechaNacimiento).days / 7
+                if edad_semanas < vacuna.edad_minima_semanas:
+                    return Response({
+                        'success': False,
+                        'message': (
+                            f'Mascota demasiado joven: "{vacuna.nombre}" requiere edad mínima de '
+                            f'{vacuna.edad_minima_semanas} semanas. '
+                            f'{mascota_para_validar.nombreMascota} tiene {edad_semanas:.1f} semanas.'
+                        ),
+                        'error_code': 'MASCOTA_TOO_YOUNG',
+                        'status': 'error'
+                    }, status=status.HTTP_400_BAD_REQUEST)
             
             # 🔧 FIX: Usar dosis_numero enviado por frontend, con manejo robusto
             dosis_numero_raw = data.get('dosis_numero')
@@ -1860,13 +1904,6 @@ class VacunaViewSet(viewsets.ModelViewSet):
             
             # 🛡️ CORRECCION CRITICA: Validación ESTRICTA de límites de protocolo
             dosis_maxima_protocolo = vacuna.dosis_total
-
-            # DEBUGGING ADICIONAL PARA CASO ESPECIFICO
-            print(f"VALIDACION DE DOSIS:")
-            print(f"- dosis_numero_frontend: {dosis_numero_frontend}")
-            print(f"- dosis_maxima_protocolo (vacuna.dosis_total): {dosis_maxima_protocolo}")
-            print(f"- vacuna.nombre: {vacuna.nombre}")
-            print(f"- Validacion: {dosis_numero_frontend} > {dosis_maxima_protocolo} = {dosis_numero_frontend > dosis_maxima_protocolo}")
 
             # 1. Validar que la dosis no exceda el protocolo de la vacuna
             if dosis_numero_frontend > dosis_maxima_protocolo:
@@ -1952,11 +1989,27 @@ class VacunaViewSet(viewsets.ModelViewSet):
                 # Calcular días desde última aplicación
                 dias_desde_ultima = (fecha_aplicacion - ultima_aplicacion.fecha_aplicacion).days
 
-                # 🔒 REGLA 1: Prevenir duplicados RECIENTES (menos de 30 días)
-                if dias_desde_ultima < 30:
+                # 🔒 REGLA 1: Prevenir duplicados recientes
+                # Para protocolos multi-dosis: usar el intervalo del protocolo (con 20% de tolerancia)
+                # Para vacunas de dosis única o refuerzos: usar 30 días como mínimo
+                dosis_aplicadas_actuales = aplicaciones_existentes.count()
+                en_protocolo_multidosis = (
+                    vacuna.dosis_total > 1 and
+                    dosis_aplicadas_actuales < vacuna.dosis_total
+                )
+                if en_protocolo_multidosis:
+                    dias_minimo_entre_dosis = int(vacuna.intervalo_dosis_semanas * 7 * 0.8)
+                else:
+                    dias_minimo_entre_dosis = 30
+
+                if dias_desde_ultima < dias_minimo_entre_dosis:
                     return Response({
                         'success': False,
-                        'message': f'{vacuna.nombre} fue aplicada recientemente el {ultima_aplicacion.fecha_aplicacion} (hace {dias_desde_ultima} días). Espere al menos 30 días para reaplicar.',
+                        'message': (
+                            f'{vacuna.nombre} fue aplicada recientemente el {ultima_aplicacion.fecha_aplicacion} '
+                            f'(hace {dias_desde_ultima} días). '
+                            f'Espere al menos {dias_minimo_entre_dosis} días para reaplicar.'
+                        ),
                         'error_code': 'RECENTLY_APPLIED',
                         'status': 'error'
                     }, status=status.HTTP_400_BAD_REQUEST)
@@ -2055,45 +2108,34 @@ class VacunaViewSet(viewsets.ModelViewSet):
                 protocolo_info['dosis_total'] = vacuna.dosis_total
                 protocolo_info['intervalos'] = [vacuna.intervalo_dosis_semanas] * (vacuna.dosis_total - 1)
             
-            # 4. 🔥 VERIFICAR DOSIS ATRASADAS CON PROTOCOLO INTELIGENTE (FIXED + DEBUG)
+            # 4. 🔥 VERIFICAR DOSIS ATRASADAS CON PROTOCOLO INTELIGENTE
             ultima_aplicacion = historial_previo_query.last()
-            print(f"DEBUG vencida_reinicio: historial_count={historial_count}, ultima_aplicacion={ultima_aplicacion}")
 
             if ultima_aplicacion and historial_count > 0:
                 # 🚨 FIX CRÍTICO: Comparar con próxima_fecha esperada, NO con fecha_aplicacion
                 dias_desde_proxima_esperada = (fecha_aplicacion - ultima_aplicacion.proxima_fecha).days
-                print(f"DEBUG: dias_desde_proxima_esperada={dias_desde_proxima_esperada}, ultima_proxima={ultima_aplicacion.proxima_fecha}")
 
                 # Calcular máximo atraso permitido según el protocolo actual
                 dosis_previa = historial_count  # La dosis anterior (1-based)
-                print(f"DEBUG: dosis_previa={dosis_previa}, protocolo_intervalos={protocolo_info.get('intervalos')}")
 
                 if protocolo_info['intervalos'] and dosis_previa <= len(protocolo_info['intervalos']):
                     # Usar intervalo específico del protocolo
                     intervalo_esperado_semanas = protocolo_info['intervalos'][dosis_previa - 1]
                     max_atraso_dinamico = (intervalo_esperado_semanas * 7) + 21  # Intervalo + 3 semanas tolerancia
-                    print(f"DEBUG: Usando intervalo protocolo: {intervalo_esperado_semanas} semanas, max_atraso_dinamico={max_atraso_dinamico}")
                 else:
                     # Fallback: usar configuración base
                     max_atraso_dinamico = vacuna.max_dias_atraso
-                    print(f"DEBUG: Usando max_dias_atraso base: {max_atraso_dinamico}")
-
-                print(f"DEBUG: Comparando {dias_desde_proxima_esperada} > {max_atraso_dinamico}? {dias_desde_proxima_esperada > max_atraso_dinamico}")
 
                 # 🔥 LÓGICA CORREGIDA: Usar días desde próxima fecha esperada
                 if dias_desde_proxima_esperada > max_atraso_dinamico:
                     reiniciar_protocolo = True
                     # Marcar registros previos como vencida_reinicio
-                    registros_actualizados = HistorialVacunacion.objects.filter(
+                    HistorialVacunacion.objects.filter(
                         mascota_id=data['mascota_id'],
                         vacuna=vacuna,
                         estado__in=['aplicada', 'vigente', 'vencida']  # 🆕 Incluir 'vencida'
                     ).update(estado='vencida_reinicio')
                     dosis_real_en_protocolo = 1  # Reiniciar como dosis 1
-                    print(f"🚀 PROTOCOLO REINICIADO: {dias_desde_proxima_esperada} días desde próxima fecha > {max_atraso_dinamico} días permitidos")
-                    print(f"📝 {registros_actualizados} registros marcados como vencida_reinicio")
-                else:
-                    print(f"DEBUG: NO se reinicia protocolo. {dias_desde_proxima_esperada} <= {max_atraso_dinamico}")
             
             # 5. CALCULAR PRÓXIMA FECHA (ALGORITMO UNIVERSAL)
             dosis_total_efectiva = protocolo_info['dosis_total']
@@ -2241,8 +2283,8 @@ class VacunaViewSet(viewsets.ModelViewSet):
             }, status=status.HTTP_404_NOT_FOUND)
         
         except Exception as e:
-            # Log del error para debugging (en producción usar logging)
-            print(f"ERROR INESPERADO en aplicar vacuna: {str(e)}")
+            import logging
+            logging.getLogger(__name__).error(f"Error inesperado en _aplicar_dosis_individual: {str(e)}", exc_info=True)
             return Response({
                 'success': False,
                 'message': 'Error interno del servidor',
@@ -2601,7 +2643,7 @@ def alertas_dashboard(request):
                 registro_vencido.estado = 'completado'
                 registro_vencido.save()
 
-                print(f"AUTO-PROGRESIÓN: {registro_vencido.vacuna.nombre} - Dosis {registro_vencido.dosis_numero} -> Dosis {siguiente_dosis.dosis_numero} para {registro_vencido.mascota.nombreMascota}")
+                pass  # Auto-progresión aplicada
         
         # 🎯 CONSULTA SIMPLE - Solo vencidas y próximas (como solicitó el usuario)
         fecha_limite = date.today() + timedelta(days=30)  # 30 días hacia futuro
