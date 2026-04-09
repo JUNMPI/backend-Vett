@@ -1302,16 +1302,6 @@ class VacunaViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(vacunas_activas, many=True)
         return Response(serializer.data)
     
-    @action(detail=False, methods=['get'], url_path='por-especie/(?P<especie>[^/.]+)')
-    def por_especie(self, request, especie=None):
-        """Obtener vacunas por especie"""
-        vacunas = Vacuna.objects.filter(
-            especies__icontains=especie.title(),
-            estado__iexact='activo'
-        )
-        serializer = self.get_serializer(vacunas, many=True)
-        return Response(serializer.data)
-    
     @action(detail=False, methods=['get'], url_path='obligatorias')
     def obligatorias(self, request):
         """Obtener solo vacunas obligatorias"""

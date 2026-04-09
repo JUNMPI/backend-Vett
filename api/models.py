@@ -998,8 +998,13 @@ class Vacuna(models.Model):
         help_text="¿Es obligatoria por ley peruana?"
     )
     edad_minima_semanas = models.IntegerField(
-        default=6, 
+        default=6,
         help_text="Edad mínima en semanas para primera aplicación"
+    )
+    edad_maxima_semanas = models.IntegerField(
+        null=True,
+        blank=True,
+        help_text="Edad máxima en semanas (opcional, dejar vacío si no aplica)"
     )
     enfermedad_previene = models.TextField(
         help_text="Enfermedades que previene"
