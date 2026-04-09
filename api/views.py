@@ -2444,6 +2444,24 @@ class HistorialVacunacionViewSet(viewsets.ModelViewSet):
             logging.getLogger(__name__).error(f"Error calculando estado inicial: {e}", exc_info=True)
             return 'aplicada'
 
+    def create(self, request, *args, **kwargs):
+        return Response(
+            {'error': 'Use los endpoints /aplicar/ o /aplicar-protocolo-completo/ para registrar vacunas.'},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED
+        )
+
+    def update(self, request, *args, **kwargs):
+        return Response(
+            {'error': 'Los registros del historial de vacunación son inmutables.'},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED
+        )
+
+    def partial_update(self, request, *args, **kwargs):
+        return Response(
+            {'error': 'Los registros del historial de vacunación son inmutables.'},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED
+        )
+
     def destroy(self, request, *args, **kwargs):
         return Response(
             {'error': 'Los registros del historial de vacunación no pueden eliminarse.'},
@@ -2451,10 +2469,28 @@ class HistorialVacunacionViewSet(viewsets.ModelViewSet):
         )
 
     def get_queryset(self):
-        mascota_id = self.request.query_params.get('mascota_id')
-        if mascota_id:
-            return HistorialVacunacion.objects.filter(mascota__id=mascota_id)
-        return HistorialVacunacion.objects.all()
+        from datetime import date, timedelta
+        qs = HistorialVacunacion.objects.all()
+        params = self.request.query_params
+        if params.get('mascota_id'):
+            qs = qs.filter(mascota__id=params['mascota_id'])
+        if params.get('vacuna_id'):
+            qs = qs.filter(vacuna__id=params['vacuna_id'])
+        if params.get('veterinario_id'):
+            qs = qs.filter(veterinario__id=params['veterinario_id'])
+        estado_param = params.get('estado')
+        if estado_param:
+            hoy = date.today()
+            en_30_dias = hoy + timedelta(days=30)
+            if estado_param == 'vencida':
+                qs = qs.filter(proxima_fecha__lt=hoy, vacuna__dosis_total=1)
+            elif estado_param == 'vencida_reinicio':
+                qs = qs.filter(proxima_fecha__lt=hoy - timedelta(days=60), vacuna__dosis_total__gt=1)
+            elif estado_param == 'proxima':
+                qs = qs.filter(proxima_fecha__gte=hoy, proxima_fecha__lte=en_30_dias)
+            elif estado_param == 'vigente':
+                qs = qs.filter(proxima_fecha__gt=en_30_dias)
+        return qs
 
     @action(detail=False, methods=['get'], url_path='por-mascota/(?P<mascota_id>[^/.]+)')
     def por_mascota(self, request, mascota_id=None):
