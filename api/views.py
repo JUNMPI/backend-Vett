@@ -238,8 +238,8 @@ class TrabajadorViewSet(viewsets.ModelViewSet):
         trabajador = self.get_object()
         nueva_password = request.data.get('password')
 
-        if not nueva_password or len(nueva_password) < 6:
-            return Response({'error': 'La contraseña debe tener al menos 6 caracteres.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not nueva_password or len(nueva_password.strip()) < 6:
+            return Response({'error': 'La contraseña debe tener al menos 6 caracteres sin espacios.'}, status=status.HTTP_400_BAD_REQUEST)
 
         usuario = trabajador.usuario
         usuario.set_password(nueva_password)
@@ -274,9 +274,29 @@ class VeterinarioViewSet(viewsets.ModelViewSet):
             trabajador__estado__iexact='activo'
         )
 
-    # ENDPOINT ELIMINADO: asignar-dias
-    # Ya no es necesario porque dias_trabajo se genera automáticamente desde horarios_trabajo.
-    # El frontend debe usar el endpoint POST /api/horarios-trabajo/ en su lugar.
+    def create(self, request, *args, **kwargs):
+        trabajador_id = request.data.get('trabajador')
+        if trabajador_id:
+            try:
+                trabajador = Trabajador.objects.get(id=trabajador_id)
+                # Validar que el trabajador tenga rol veterinario
+                if trabajador.usuario.rol.lower() != 'veterinario':
+                    return Response({
+                        'error': f'El trabajador debe tener rol "veterinario", tiene "{trabajador.usuario.rol}".',
+                        'error_code': 'INVALID_ROL'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                # Validar que no exista ya un registro Veterinario para este trabajador
+                if Veterinario.objects.filter(trabajador=trabajador).exists():
+                    return Response({
+                        'error': 'Ya existe un registro de veterinario para este trabajador.',
+                        'error_code': 'VETERINARIO_ALREADY_EXISTS'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            except Trabajador.DoesNotExist:
+                return Response({
+                    'error': 'Trabajador no encontrado.',
+                    'error_code': 'TRABAJADOR_NOT_FOUND'
+                }, status=status.HTTP_400_BAD_REQUEST)
+        return super().create(request, *args, **kwargs)
 
     #buscar el trabajador por id de trabajador
     @action(detail=False, methods=['get'], url_path='por-trabajador/(?P<trabajador_id>[^/.]+)')
