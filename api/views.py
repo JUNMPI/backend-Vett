@@ -274,29 +274,50 @@ class VeterinarioViewSet(viewsets.ModelViewSet):
             trabajador__estado__iexact='activo'
         )
 
+    def _validar_trabajador_veterinario(self, trabajador_id, instancia_actual=None):
+        """Valida que el trabajador existe y tiene rol veterinario."""
+        try:
+            trabajador = Trabajador.objects.get(id=trabajador_id)
+        except Trabajador.DoesNotExist:
+            return Response({'error': 'Trabajador no encontrado.', 'error_code': 'TRABAJADOR_NOT_FOUND'}, status=status.HTTP_400_BAD_REQUEST)
+        if trabajador.usuario.rol.lower() != 'veterinario':
+            return Response({
+                'error': f'El trabajador debe tener rol "veterinario", tiene "{trabajador.usuario.rol}".',
+                'error_code': 'INVALID_ROL'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        # En creación verificar que no exista ya un Veterinario para este trabajador
+        qs = Veterinario.objects.filter(trabajador=trabajador)
+        if instancia_actual:
+            qs = qs.exclude(pk=instancia_actual.pk)
+        if qs.exists():
+            return Response({'error': 'Ya existe un registro de veterinario para este trabajador.', 'error_code': 'VETERINARIO_ALREADY_EXISTS'}, status=status.HTTP_400_BAD_REQUEST)
+        return None  # Sin error
+
     def create(self, request, *args, **kwargs):
         trabajador_id = request.data.get('trabajador')
         if trabajador_id:
-            try:
-                trabajador = Trabajador.objects.get(id=trabajador_id)
-                # Validar que el trabajador tenga rol veterinario
-                if trabajador.usuario.rol.lower() != 'veterinario':
-                    return Response({
-                        'error': f'El trabajador debe tener rol "veterinario", tiene "{trabajador.usuario.rol}".',
-                        'error_code': 'INVALID_ROL'
-                    }, status=status.HTTP_400_BAD_REQUEST)
-                # Validar que no exista ya un registro Veterinario para este trabajador
-                if Veterinario.objects.filter(trabajador=trabajador).exists():
-                    return Response({
-                        'error': 'Ya existe un registro de veterinario para este trabajador.',
-                        'error_code': 'VETERINARIO_ALREADY_EXISTS'
-                    }, status=status.HTTP_400_BAD_REQUEST)
-            except Trabajador.DoesNotExist:
-                return Response({
-                    'error': 'Trabajador no encontrado.',
-                    'error_code': 'TRABAJADOR_NOT_FOUND'
-                }, status=status.HTTP_400_BAD_REQUEST)
+            error = self._validar_trabajador_veterinario(trabajador_id)
+            if error:
+                return error
         return super().create(request, *args, **kwargs)
+
+    def update(self, request, *args, **kwargs):
+        trabajador_id = request.data.get('trabajador')
+        if trabajador_id:
+            instancia = self.get_object()
+            error = self._validar_trabajador_veterinario(trabajador_id, instancia_actual=instancia)
+            if error:
+                return error
+        return super().update(request, *args, **kwargs)
+
+    def partial_update(self, request, *args, **kwargs):
+        trabajador_id = request.data.get('trabajador')
+        if trabajador_id:
+            instancia = self.get_object()
+            error = self._validar_trabajador_veterinario(trabajador_id, instancia_actual=instancia)
+            if error:
+                return error
+        return super().partial_update(request, *args, **kwargs)
 
     #buscar el trabajador por id de trabajador
     @action(detail=False, methods=['get'], url_path='por-trabajador/(?P<trabajador_id>[^/.]+)')
