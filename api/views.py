@@ -1550,6 +1550,13 @@ class VacunaViewSet(viewsets.ModelViewSet):
                     'error_code': 'VETERINARIAN_NOT_FOUND',
                     'status': 'error'
                 }, status=status.HTTP_400_BAD_REQUEST)
+            if veterinario.trabajador.estado != 'Activo':
+                return Response({
+                    'success': False,
+                    'message': 'El veterinario está inactivo y no puede aplicar vacunas.',
+                    'error_code': 'VETERINARIAN_INACTIVE',
+                    'status': 'error'
+                }, status=status.HTTP_400_BAD_REQUEST)
 
             # Crear un solo registro que represente el protocolo completo
             from datetime import timedelta
@@ -1810,7 +1817,14 @@ class VacunaViewSet(viewsets.ModelViewSet):
                     'error_code': 'VETERINARIAN_NOT_FOUND',
                     'status': 'error'
                 }, status=status.HTTP_400_BAD_REQUEST)
-            
+            if veterinario.trabajador.estado != 'Activo':
+                return Response({
+                    'success': False,
+                    'message': 'El veterinario está inactivo y no puede aplicar vacunas.',
+                    'error_code': 'VETERINARIAN_INACTIVE',
+                    'status': 'error'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
             # Crear observaciones específicas para protocolo completo
             observaciones_base = data.get('observaciones', '')
             observaciones_protocolo = f'{observaciones_base} (Protocolo completo: {dosis_aplicadas} dosis aplicadas)'.strip()
@@ -2427,15 +2441,21 @@ class HistorialVacunacionViewSet(viewsets.ModelViewSet):
 
         except Exception as e:
             # En caso de error, devolver estado seguro
-            print(f"Error calculando estado inicial: {e}")
+            logging.getLogger(__name__).error(f"Error calculando estado inicial: {e}", exc_info=True)
             return 'aplicada'
+
+    def destroy(self, request, *args, **kwargs):
+        return Response(
+            {'error': 'Los registros del historial de vacunación no pueden eliminarse.'},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED
+        )
 
     def get_queryset(self):
         mascota_id = self.request.query_params.get('mascota_id')
         if mascota_id:
             return HistorialVacunacion.objects.filter(mascota__id=mascota_id)
         return HistorialVacunacion.objects.all()
-    
+
     @action(detail=False, methods=['get'], url_path='por-mascota/(?P<mascota_id>[^/.]+)')
     def por_mascota(self, request, mascota_id=None):
         """Obtener historial de vacunación por mascota"""
@@ -2549,12 +2569,32 @@ class HistorialVacunacionViewSet(viewsets.ModelViewSet):
             vacuna_id = data.get('vacuna_id') or data.get('vacuna')  # Acepta ambos formatos
             vacuna = Vacuna.objects.get(id=vacuna_id)
             fecha_aplicacion = date.fromisoformat(data['fecha_aplicacion'])
-            
+
+            # Validar veterinario activo
+            veterinario_id = data.get('veterinario_id') or data.get('veterinario')
+            if veterinario_id:
+                try:
+                    vet_obj = Veterinario.objects.get(id=veterinario_id)
+                    if vet_obj.trabajador.estado != 'Activo':
+                        return Response({
+                            'success': False,
+                            'message': 'El veterinario está inactivo y no puede aplicar vacunas.',
+                            'error_code': 'VETERINARIAN_INACTIVE',
+                            'status': 'error'
+                        }, status=status.HTTP_400_BAD_REQUEST)
+                except Veterinario.DoesNotExist:
+                    return Response({
+                        'success': False,
+                        'message': 'Veterinario no encontrado.',
+                        'error_code': 'VETERINARIAN_NOT_FOUND',
+                        'status': 'error'
+                    }, status=status.HTTP_404_NOT_FOUND)
+
             # 🧠 LÓGICA INTELIGENTE: Calcular próxima fecha según protocolo de vacunación
             dosis_numero = data.get('dosis_numero', 1)
             proxima_fecha = self.calcular_proxima_fecha(vacuna, fecha_aplicacion, dosis_numero)
-            
-                # 🔄 ACTUALIZAR REGISTROS ANTERIORES DE LA MISMA VACUNA
+
+            # 🔄 ACTUALIZAR REGISTROS ANTERIORES DE LA MISMA VACUNA
             # Marcar registros anteriores como "completados" para eliminar alertas
             registros_anteriores = HistorialVacunacion.objects.filter(
                 mascota_id=data.get('mascota_id') or data.get('mascota'),
