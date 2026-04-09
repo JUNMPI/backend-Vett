@@ -28,7 +28,16 @@ class TipoDocumentoSerializer(serializers.ModelSerializer):
 
 
 class UsuarioSerializer(serializers.ModelSerializer):
-    password = serializers.CharField(write_only=True, required=False)
+    password = serializers.CharField(
+        write_only=True,
+        required=False,
+        min_length=6,
+        allow_blank=False,
+        error_messages={
+            'min_length': 'La contraseña debe tener al menos 6 caracteres.',
+            'blank': 'La contraseña no puede estar en blanco.'
+        }
+    )
     rol = CapitalizedChoiceField(choices=Rol.ROL_CHOICES)
 
     class Meta:
@@ -40,10 +49,14 @@ class UsuarioSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         password = validated_data.pop('password', None)
+        if not password:
+            raise serializers.ValidationError({'password': 'La contraseña es obligatoria para crear un usuario.'})
+        email = validated_data.get('email')
+        if email and Usuario.objects.filter(email=email).exists():
+            raise serializers.ValidationError({'email': 'Ya existe un usuario registrado con este correo.'})
         usuario = Usuario.objects.create(**validated_data)
-        if password:
-            usuario.set_password(password)
-            usuario.save()
+        usuario.set_password(password)
+        usuario.save()
         return usuario
 
     def update(self, instance, validated_data):
