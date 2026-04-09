@@ -1467,7 +1467,38 @@ class VacunaViewSet(viewsets.ModelViewSet):
             # Validar que no exceda el protocolo
             if dosis_aplicadas > vacuna.dosis_total:
                 dosis_aplicadas = vacuna.dosis_total
-            
+
+            # Validar existencia y compatibilidad de mascota
+            try:
+                mascota_obj = Mascota.objects.get(id=data['mascota_id'])
+            except Mascota.DoesNotExist:
+                return Response({
+                    'success': False,
+                    'message': 'Mascota no encontrada',
+                    'error_code': 'MASCOTA_NOT_FOUND',
+                    'status': 'error'
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            # Validar compatibilidad de especie
+            if vacuna.especies and mascota_obj.especie not in vacuna.especies:
+                return Response({
+                    'success': False,
+                    'message': f'La vacuna {vacuna.nombre} no es aplicable a {mascota_obj.especie}. Especies válidas: {", ".join(vacuna.especies)}',
+                    'error_code': 'SPECIES_MISMATCH',
+                    'status': 'error'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Validar edad mínima
+            if vacuna.edad_minima_semanas and mascota_obj.fechaNacimiento:
+                edad_semanas = (fecha_aplicacion - mascota_obj.fechaNacimiento).days / 7
+                if edad_semanas < vacuna.edad_minima_semanas:
+                    return Response({
+                        'success': False,
+                        'message': f'La mascota tiene {edad_semanas:.1f} semanas y la vacuna {vacuna.nombre} requiere mínimo {vacuna.edad_minima_semanas} semanas de edad.',
+                        'error_code': 'MASCOTA_TOO_YOUNG',
+                        'status': 'error'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+
             # Obtener veterinario
             try:
                 veterinario = Veterinario.objects.get(id=data['veterinario_id'])
@@ -1478,7 +1509,7 @@ class VacunaViewSet(viewsets.ModelViewSet):
                     'error_code': 'VETERINARIAN_NOT_FOUND',
                     'status': 'error'
                 }, status=status.HTTP_400_BAD_REQUEST)
-            
+
             # Crear un solo registro que represente el protocolo completo
             from datetime import timedelta
             from dateutil.relativedelta import relativedelta
