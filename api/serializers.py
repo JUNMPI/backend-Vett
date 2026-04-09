@@ -590,6 +590,9 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
 
 # 🐾 SERIALIZERS SISTEMA DE VACUNACIÓN
 
+ESPECIES_VALIDAS = ['Perro', 'Gato', 'Ave', 'Conejo', 'Hamster', 'Reptil', 'Otro']
+
+
 class VacunaSerializer(serializers.ModelSerializer):
     estado = serializers.ChoiceField(choices=Estado.ESTADO_CHOICES, required=False, default=Estado.ACTIVO)
     producto_inventario = serializers.PrimaryKeyRelatedField(
@@ -598,7 +601,7 @@ class VacunaSerializer(serializers.ModelSerializer):
         allow_null=True
     )
     producto_inventario_info = serializers.SerializerMethodField()
-    # Campo canónico para el frontend: lee Y escribe el campo 'especies' del modelo
+    # Campo canónico: lee Y escribe el campo 'especies' del modelo
     especies_aplicables = serializers.ListField(
         child=serializers.CharField(),
         source='especies',
@@ -613,12 +616,77 @@ class VacunaSerializer(serializers.ModelSerializer):
             'edad_minima_semanas', 'edad_maxima_semanas', 'enfermedad_previene', 'dosis_total',
             'intervalo_dosis_semanas', 'estado', 'producto_inventario',
             'producto_inventario_info', 'creado', 'actualizado',
-            # Campos para protocolos avanzados
             'protocolo_dosis', 'max_dias_atraso', 'protocolo_cachorro'
         ]
 
+    # ---- Validaciones individuales ----
+
+    def validate_nombre(self, value):
+        value = value.strip()
+        if len(value) < 3:
+            raise serializers.ValidationError("El nombre debe tener al menos 3 caracteres.")
+        # Unicidad: ignorar la instancia actual al editar
+        qs = Vacuna.objects.filter(nombre__iexact=value)
+        if self.instance:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError(f'Ya existe una vacuna con el nombre "{value}".')
+        return value
+
+    def validate_frecuencia_meses(self, value):
+        if value < 1:
+            raise serializers.ValidationError("La frecuencia debe ser al menos 1 mes.")
+        if value > 120:
+            raise serializers.ValidationError("La frecuencia no puede superar 120 meses (10 años).")
+        return value
+
+    def validate_dosis_total(self, value):
+        if value < 1:
+            raise serializers.ValidationError("El número de dosis debe ser al menos 1.")
+        if value > 10:
+            raise serializers.ValidationError("El número de dosis no puede superar 10.")
+        return value
+
+    def validate_intervalo_dosis_semanas(self, value):
+        if value < 1:
+            raise serializers.ValidationError("El intervalo entre dosis debe ser al menos 1 semana.")
+        return value
+
+    def validate_edad_minima_semanas(self, value):
+        if value < 1:
+            raise serializers.ValidationError("La edad mínima debe ser al menos 1 semana.")
+        return value
+
+    # ---- Validación cruzada (nivel objeto) ----
+
+    def validate(self, attrs):
+        # especies: no puede estar vacía y debe ser de la lista válida
+        especies = attrs.get('especies', self.instance.especies if self.instance else None)
+        if especies is not None:
+            if len(especies) == 0:
+                raise serializers.ValidationError(
+                    {'especies_aplicables': 'Debe seleccionar al menos una especie aplicable.'}
+                )
+            invalidas = [e for e in especies if e not in ESPECIES_VALIDAS]
+            if invalidas:
+                raise serializers.ValidationError(
+                    {'especies_aplicables': f'Especies no reconocidas: {invalidas}. Válidas: {ESPECIES_VALIDAS}'}
+                )
+
+        # edad_max debe ser mayor que edad_min si se especifica
+        edad_min = attrs.get('edad_minima_semanas',
+                             self.instance.edad_minima_semanas if self.instance else None)
+        edad_max = attrs.get('edad_maxima_semanas',
+                             self.instance.edad_maxima_semanas if self.instance else None)
+        if edad_min is not None and edad_max is not None:
+            if edad_max <= edad_min:
+                raise serializers.ValidationError(
+                    {'edad_maxima_semanas': 'La edad máxima debe ser mayor que la edad mínima.'}
+                )
+
+        return attrs
+
     def get_producto_inventario_info(self, obj):
-        """Información completa del producto de inventario relacionado"""
         if obj.producto_inventario:
             return {
                 'id': str(obj.producto_inventario.id),
