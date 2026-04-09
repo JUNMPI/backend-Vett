@@ -1881,10 +1881,19 @@ class VacunaViewSet(viewsets.ModelViewSet):
             from datetime import date
             from dateutil.relativedelta import relativedelta
             from datetime import timedelta
-            
+
+            # Validar vacuna activa
+            if vacuna.estado != 'Activo':
+                return Response({
+                    'success': False,
+                    'message': f'La vacuna "{vacuna.nombre}" está inactiva y no puede aplicarse.',
+                    'error_code': 'VACCINE_INACTIVE',
+                    'status': 'error'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
             # 🧠 LÓGICA EXISTENTE PARA DOSIS INDIVIDUALES
             fecha_aplicacion = date.fromisoformat(data['fecha_aplicacion'])
-            
+
             # ⭐ NUEVA VALIDACIÓN: Fecha no puede ser futura
             if fecha_aplicacion > date.today():
                 return Response({
@@ -1925,6 +1934,16 @@ class VacunaViewSet(viewsets.ModelViewSet):
 
             # ✅ VALIDACION DE ESPECIE: la mascota debe ser de una especie compatible
             mascota_para_validar = Mascota.objects.get(id=data['mascota_id'])
+
+            # Validar que la mascota esté activa
+            if mascota_para_validar.estado != 'Activo':
+                return Response({
+                    'success': False,
+                    'message': f'La mascota "{mascota_para_validar.nombreMascota}" está inactiva y no puede recibir vacunas.',
+                    'error_code': 'MASCOTA_INACTIVE',
+                    'status': 'error'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
             if vacuna.especies and mascota_para_validar.especie not in vacuna.especies:
                 return Response({
                     'success': False,
