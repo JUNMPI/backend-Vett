@@ -1592,14 +1592,15 @@ class VacunaViewSet(viewsets.ModelViewSet):
                     'mensaje_usuario': f'Protocolo completo aplicado ({dosis_aplicadas} dosis). Próximo refuerzo en {vacuna.frecuencia_meses} meses',
                     'protocolo_info': {
                         'dosis_aplicadas': dosis_aplicadas,
+                        'dosis_total': vacuna.dosis_total,
                         'dosis_total_protocolo': vacuna.dosis_total,
                         'es_protocolo_completo': True,
                         'proxima_accion': 'refuerzo_anual'
                     }
                 },
                 'status': 'success'
-            })
-            
+            }, status=status.HTTP_201_CREATED)
+
         except Exception as e:
             return Response({
                 'success': False,
@@ -1607,7 +1608,7 @@ class VacunaViewSet(viewsets.ModelViewSet):
                 'error_code': 'PROTOCOL_APPLICATION_ERROR',
                 'status': 'error'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    
+
     @action(detail=True, methods=['post'], url_path='aplicar')
     @transaction.atomic
     def aplicar(self, request, pk=None):
@@ -1857,13 +1858,14 @@ class VacunaViewSet(viewsets.ModelViewSet):
                     'mensaje_usuario': f'Protocolo completo aplicado ({dosis_aplicadas} dosis). Próximo refuerzo en {vacuna.frecuencia_meses} meses',
                     'protocolo_info': {
                         'dosis_aplicadas': dosis_aplicadas,
+                        'dosis_total': vacuna.dosis_total,
                         'dosis_total_protocolo': vacuna.dosis_total,
                         'es_protocolo_completo': True,
                         'proxima_accion': 'refuerzo_anual'
                     }
                 },
                 'status': 'success'
-            })
+            }, status=status.HTTP_201_CREATED)
 
         except Exception as e:
             import logging, traceback
@@ -2349,6 +2351,7 @@ class VacunaViewSet(viewsets.ModelViewSet):
                     'mensaje_usuario': mensaje_usuario,
                     'protocolo_info': {
                         'dosis_actual': dosis_real_en_protocolo,
+                        'dosis_total': vacuna.dosis_total,
                         'dosis_total_original': vacuna.dosis_total,
                         'dosis_total_efectiva': dosis_total_efectiva,
                         'es_dosis_final': es_dosis_final,
