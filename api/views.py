@@ -2402,7 +2402,7 @@ class VacunaViewSet(viewsets.ModelViewSet):
                 HistorialVacunacion.objects.filter(
                     mascota_id=data['mascota_id'],
                     vacuna=vacuna,
-                    estado__in=['aplicada', 'vigente', 'vencida', 'proxima']
+                    estado__in=['aplicada', 'vigente', 'vencida', 'proxima', 'vencida_reinicio']
                 ).exclude(id=historial.id).update(estado='completado')
             
             # 📊 Generar mensaje personalizado inteligente
@@ -2850,7 +2850,7 @@ class HistorialVacunacionViewSet(viewsets.ModelViewSet):
                 HistorialVacunacion.objects.filter(
                     mascota_id=mascota_id,
                     vacuna_id=vacuna_id,
-                    estado__in=['aplicada', 'vigente', 'vencida', 'proxima']
+                    estado__in=['aplicada', 'vigente', 'vencida', 'proxima', 'vencida_reinicio']
                 ).update(estado='completado')
 
                 historial_data = {
@@ -2958,14 +2958,14 @@ def alertas_dashboard(request):
             estado__in=['aplicada', 'vencida']
         ).update(estado='vencida_reinicio')
 
-        # Marcar como críticas las próximas (0-7 días)
+        # Marcar como próximas las críticas (0-7 días) — 'critica' no es un estado válido
         HistorialVacunacion.objects.filter(
             proxima_fecha__lte=fecha_critica,
             proxima_fecha__gte=fecha_hoy,
             estado='aplicada'
         ).exclude(
             estado='vencida_reinicio'
-        ).update(estado='critica')
+        ).update(estado='proxima')
 
         # Marcar como próximas las que están en rango normal (8-30 días)
         fecha_proxima_normal = date.today() + timedelta(days=30)
