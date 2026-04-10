@@ -1746,6 +1746,15 @@ class VacunaViewSet(viewsets.ModelViewSet):
             from datetime import date as date_class
             from dateutil.relativedelta import relativedelta
 
+            # Validar vacuna activa
+            if vacuna.estado != 'Activo':
+                return Response({
+                    'success': False,
+                    'message': f'La vacuna "{vacuna.nombre}" está inactiva y no puede aplicarse.',
+                    'error_code': 'VACCINE_INACTIVE',
+                    'status': 'error'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
             fecha_aplicacion = date_class.fromisoformat(data['fecha_aplicacion'])
 
             # Validar fecha no futura
@@ -1757,9 +1766,19 @@ class VacunaViewSet(viewsets.ModelViewSet):
                     'status': 'error'
                 }, status=status.HTTP_400_BAD_REQUEST)
 
-            # Validar compatibilidad de especie
+            # Validar compatibilidad de especie y estado de mascota
             try:
                 mascota_proto = Mascota.objects.get(id=data['mascota_id'])
+
+                # Validar mascota activa
+                if mascota_proto.estado != 'Activo':
+                    return Response({
+                        'success': False,
+                        'message': f'La mascota "{mascota_proto.nombreMascota}" no está activa y no puede recibir vacunas.',
+                        'error_code': 'MASCOTA_INACTIVE',
+                        'status': 'error'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+
                 if vacuna.especies and mascota_proto.especie not in vacuna.especies:
                     return Response({
                         'success': False,
@@ -2626,7 +2645,7 @@ class HistorialVacunacionViewSet(viewsets.ModelViewSet):
         URL: POST /api/historial-vacunacion/aplicar-vacuna/
         Body: {
             "mascota_id": "uuid",
-            "vacuna_id": "uuid", 
+            "vacuna_id": "uuid",
             "fecha_aplicacion": "2025-09-07",
             "veterinario_id": "uuid",
             "lote": "L123456",
@@ -2636,14 +2655,83 @@ class HistorialVacunacionViewSet(viewsets.ModelViewSet):
         """
         from datetime import date
         from dateutil.relativedelta import relativedelta
-        
+        from django.db import transaction
+
         try:
             data = request.data
-            
+
             # Obtener la vacuna para calcular próxima fecha
-            vacuna_id = data.get('vacuna_id') or data.get('vacuna')  # Acepta ambos formatos
+            vacuna_id = data.get('vacuna_id') or data.get('vacuna')
             vacuna = Vacuna.objects.get(id=vacuna_id)
+
+            # Validar vacuna activa
+            if vacuna.estado != 'Activo':
+                return Response({
+                    'success': False,
+                    'message': f'La vacuna "{vacuna.nombre}" está inactiva y no puede aplicarse.',
+                    'error_code': 'VACCINE_INACTIVE',
+                    'status': 'error'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Validar fecha no futura
             fecha_aplicacion = date.fromisoformat(data['fecha_aplicacion'])
+            if fecha_aplicacion > date.today():
+                return Response({
+                    'success': False,
+                    'message': f'La fecha de aplicación no puede ser futura: {fecha_aplicacion}',
+                    'error_code': 'FUTURE_APPLICATION_DATE',
+                    'status': 'error'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Validar dosis_numero
+            dosis_numero = data.get('dosis_numero', 1)
+            if not isinstance(dosis_numero, int):
+                try:
+                    dosis_numero = int(dosis_numero)
+                except (TypeError, ValueError):
+                    dosis_numero = 0
+            if dosis_numero <= 0:
+                return Response({
+                    'success': False,
+                    'message': 'El número de dosis debe ser mayor a 0.',
+                    'error_code': 'INVALID_DOSIS_NUMERO',
+                    'status': 'error'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            if dosis_numero > vacuna.dosis_total:
+                return Response({
+                    'success': False,
+                    'message': f'El número de dosis ({dosis_numero}) supera el total del protocolo ({vacuna.dosis_total}).',
+                    'error_code': 'DOSIS_EXCEEDS_PROTOCOL',
+                    'status': 'error'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Validar mascota activa y especie compatible
+            mascota_id = data.get('mascota_id') or data.get('mascota')
+            try:
+                mascota_obj = Mascota.objects.get(id=mascota_id)
+            except Mascota.DoesNotExist:
+                return Response({
+                    'success': False,
+                    'message': 'Mascota no encontrada.',
+                    'error_code': 'MASCOTA_NOT_FOUND',
+                    'status': 'error'
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            if mascota_obj.estado != 'Activo':
+                return Response({
+                    'success': False,
+                    'message': f'La mascota "{mascota_obj.nombreMascota}" no está activa y no puede recibir vacunas.',
+                    'error_code': 'MASCOTA_INACTIVE',
+                    'status': 'error'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            if vacuna.especies and mascota_obj.especie not in vacuna.especies:
+                return Response({
+                    'success': False,
+                    'message': f'La vacuna {vacuna.nombre} no es aplicable a {mascota_obj.especie}. Especies válidas: {", ".join(vacuna.especies)}',
+                    'error_code': 'SPECIES_MISMATCH',
+                    'status': 'error'
+                }, status=status.HTTP_400_BAD_REQUEST)
 
             # Validar veterinario activo
             veterinario_id = data.get('veterinario_id') or data.get('veterinario')
@@ -2665,80 +2753,95 @@ class HistorialVacunacionViewSet(viewsets.ModelViewSet):
                         'status': 'error'
                     }, status=status.HTTP_404_NOT_FOUND)
 
-            # 🧠 LÓGICA INTELIGENTE: Calcular próxima fecha según protocolo de vacunación
-            dosis_numero = data.get('dosis_numero', 1)
+            # Validar duplicado exacto (misma mascota, vacuna, dosis y fecha)
+            duplicado_exacto = HistorialVacunacion.objects.filter(
+                mascota_id=mascota_id,
+                vacuna_id=vacuna_id,
+                dosis_numero=dosis_numero,
+                fecha_aplicacion=fecha_aplicacion,
+                estado__in=['aplicada', 'vigente', 'completado']
+            ).exists()
+            if duplicado_exacto:
+                return Response({
+                    'success': False,
+                    'message': f'Ya existe un registro de {vacuna.nombre} dosis #{dosis_numero} para esta mascota en la fecha {fecha_aplicacion}.',
+                    'error_code': 'DUPLICATE_EXACT_DOSE',
+                    'status': 'error'
+                }, status=status.HTTP_409_CONFLICT)
+
             proxima_fecha = self.calcular_proxima_fecha(vacuna, fecha_aplicacion, dosis_numero)
 
-            # 🔄 ACTUALIZAR REGISTROS ANTERIORES DE LA MISMA VACUNA
-            # Marcar registros anteriores como "completados" para eliminar alertas
-            registros_anteriores = HistorialVacunacion.objects.filter(
-                mascota_id=data.get('mascota_id') or data.get('mascota'),
-                vacuna_id=vacuna_id,
-                estado__in=['aplicada', 'vigente', 'vencida', 'proxima']  # Todos los estados activos
-            )
-            
-            # Actualizar estados anteriores a "completado" para que no aparezcan en alertas
-            registros_anteriores.update(estado='completado')
-            
-            # Crear el registro de historial — normalizar claves al formato del serializer
-            historial_data = {
-                'mascota': data.get('mascota_id') or data.get('mascota'),
-                'vacuna': data.get('vacuna_id') or data.get('vacuna'),
-                'veterinario': data.get('veterinario_id') or data.get('veterinario'),
-                'fecha_aplicacion': data.get('fecha_aplicacion'),
-                'dosis_numero': dosis_numero,
-                'lote': data.get('lote', ''),
-                'laboratorio': data.get('laboratorio', ''),
-                'observaciones': data.get('observaciones', ''),
-                'proxima_fecha': proxima_fecha.isoformat(),
-                'estado': 'aplicada',
-            }
-            
-            serializer = self.get_serializer(data=historial_data)
-            if serializer.is_valid():
-                historial = serializer.save()
-                
-                # 📊 GENERAR MENSAJE PERSONALIZADO SEGÚN PROTOCOLO
-                dias_restantes = (proxima_fecha - fecha_aplicacion).days
-                if dosis_numero < vacuna.dosis_total:
-                    mensaje_usuario = f"Próxima dosis (#{dosis_numero + 1}) en {vacuna.intervalo_dosis_semanas} semanas"
+            # Operación atómica: actualizar anteriores y crear nuevo registro juntos
+            with transaction.atomic():
+                # Marcar registros anteriores como "completados"
+                HistorialVacunacion.objects.filter(
+                    mascota_id=mascota_id,
+                    vacuna_id=vacuna_id,
+                    estado__in=['aplicada', 'vigente', 'vencida', 'proxima']
+                ).update(estado='completado')
+
+                historial_data = {
+                    'mascota': mascota_id,
+                    'vacuna': vacuna_id,
+                    'veterinario': veterinario_id,
+                    'fecha_aplicacion': data.get('fecha_aplicacion'),
+                    'dosis_numero': dosis_numero,
+                    'lote': data.get('lote', ''),
+                    'laboratorio': data.get('laboratorio', ''),
+                    'observaciones': data.get('observaciones', ''),
+                    'proxima_fecha': proxima_fecha.isoformat(),
+                    'estado': 'aplicada',
+                }
+
+                serializer = self.get_serializer(data=historial_data)
+                if serializer.is_valid():
+                    historial = serializer.save()
                 else:
-                    mensaje_usuario = f"Próximo refuerzo en {vacuna.frecuencia_meses} meses"
-                
-                return Response({
-                    'success': True,
-                    'message': f'Vacuna {vacuna.nombre} aplicada correctamente',
-                    'data': {
-                        'historial_id': str(historial.id),
-                        'proxima_fecha': proxima_fecha.isoformat(),
-                        'proxima_fecha_calculada': True,
-                        'mensaje_usuario': mensaje_usuario,
-                        'protocolo_info': {
-                            'dosis_actual': dosis_numero,
-                            'dosis_total': vacuna.dosis_total,
-                            'es_dosis_final': dosis_numero >= vacuna.dosis_total,
-                            'intervalo_usado': f"{vacuna.intervalo_dosis_semanas} semanas" if dosis_numero < vacuna.dosis_total else f"{vacuna.frecuencia_meses} meses"
-                        }
-                    },
-                    'status': 'success'
-                }, status=201)
+                    return Response({
+                        'success': False,
+                        'message': 'Error en los datos proporcionados',
+                        'errors': serializer.errors,
+                        'status': 'error'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+
+            if dosis_numero < vacuna.dosis_total:
+                mensaje_usuario = f"Próxima dosis (#{dosis_numero + 1}) en {vacuna.intervalo_dosis_semanas} semanas"
             else:
-                return Response({
-                    'message': 'Error en los datos proporcionados',
-                    'errors': serializer.errors,
-                    'status': 'error'
-                }, status=400)
-                
+                mensaje_usuario = f"Próximo refuerzo en {vacuna.frecuencia_meses} meses"
+
+            return Response({
+                'success': True,
+                'message': f'Vacuna {vacuna.nombre} aplicada correctamente',
+                'data': {
+                    'historial_id': str(historial.id),
+                    'proxima_fecha': proxima_fecha.isoformat(),
+                    'proxima_fecha_calculada': True,
+                    'mensaje_usuario': mensaje_usuario,
+                    'protocolo_info': {
+                        'dosis_actual': dosis_numero,
+                        'dosis_total': vacuna.dosis_total,
+                        'es_dosis_final': dosis_numero >= vacuna.dosis_total,
+                        'intervalo_usado': f"{vacuna.intervalo_dosis_semanas} semanas" if dosis_numero < vacuna.dosis_total else f"{vacuna.frecuencia_meses} meses"
+                    }
+                },
+                'status': 'success'
+            }, status=status.HTTP_201_CREATED)
+
         except Vacuna.DoesNotExist:
             return Response({
+                'success': False,
                 'message': 'Vacuna no encontrada',
+                'error_code': 'VACCINE_NOT_FOUND',
                 'status': 'error'
-            }, status=404)
+            }, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
+            import logging, traceback
+            logging.getLogger(__name__).error(f"Error en aplicar_vacuna: {traceback.format_exc()}")
             return Response({
+                'success': False,
                 'message': f'Error al aplicar vacuna: {str(e)}',
                 'status': 'error'
-            }, status=500)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 # 🚨 ENDPOINT ESPECIALIZADO PARA DASHBOARD DE ALERTAS
