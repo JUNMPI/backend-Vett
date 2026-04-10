@@ -1499,8 +1499,16 @@ class VacunaViewSet(viewsets.ModelViewSet):
                         'status': 'error'
                     }, status=status.HTTP_400_BAD_REQUEST)
 
-            from datetime import date as date_class
-            fecha_aplicacion = date_class.fromisoformat(data['fecha_aplicacion'])
+            from datetime import date as date_class, timedelta as td_local
+            try:
+                fecha_aplicacion = date_class.fromisoformat(str(data['fecha_aplicacion']))
+            except (ValueError, TypeError):
+                return Response({
+                    'success': False,
+                    'message': f'Formato de fecha inválido: "{data["fecha_aplicacion"]}". Use formato YYYY-MM-DD.',
+                    'error_code': 'INVALID_DATE_FORMAT',
+                    'status': 'error'
+                }, status=status.HTTP_400_BAD_REQUEST)
 
             # Validar fecha no futura
             if fecha_aplicacion > date_class.today():
@@ -1510,7 +1518,16 @@ class VacunaViewSet(viewsets.ModelViewSet):
                     'error_code': 'FUTURE_APPLICATION_DATE',
                     'status': 'error'
                 }, status=status.HTTP_400_BAD_REQUEST)
-            
+
+            # Validar fecha no muy antigua (máximo 10 años)
+            if fecha_aplicacion < date_class.today() - td_local(days=3650):
+                return Response({
+                    'success': False,
+                    'message': f'Fecha muy antigua: {fecha_aplicacion}. Máximo 10 años atrás.',
+                    'error_code': 'DATE_TOO_OLD',
+                    'status': 'error'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
             # Determinar cuántas dosis se aplicaron
             dosis_aplicadas = data.get('dosis_aplicadas', vacuna.dosis_total)
             
@@ -1755,7 +1772,15 @@ class VacunaViewSet(viewsets.ModelViewSet):
                     'status': 'error'
                 }, status=status.HTTP_400_BAD_REQUEST)
 
-            fecha_aplicacion = date_class.fromisoformat(data['fecha_aplicacion'])
+            try:
+                fecha_aplicacion = date_class.fromisoformat(str(data['fecha_aplicacion']))
+            except (ValueError, TypeError):
+                return Response({
+                    'success': False,
+                    'message': f'Formato de fecha inválido: "{data["fecha_aplicacion"]}". Use formato YYYY-MM-DD.',
+                    'error_code': 'INVALID_DATE_FORMAT',
+                    'status': 'error'
+                }, status=status.HTTP_400_BAD_REQUEST)
 
             # Validar fecha no futura
             if fecha_aplicacion > date_class.today():
@@ -1763,6 +1788,15 @@ class VacunaViewSet(viewsets.ModelViewSet):
                     'success': False,
                     'message': f'Fecha de aplicación no puede ser futura: {fecha_aplicacion}',
                     'error_code': 'FUTURE_APPLICATION_DATE',
+                    'status': 'error'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Validar fecha no muy antigua (máximo 10 años)
+            if fecha_aplicacion < date_class.today() - timedelta(days=3650):
+                return Response({
+                    'success': False,
+                    'message': f'Fecha muy antigua: {fecha_aplicacion}. Máximo 10 años atrás.',
+                    'error_code': 'DATE_TOO_OLD',
                     'status': 'error'
                 }, status=status.HTTP_400_BAD_REQUEST)
 
