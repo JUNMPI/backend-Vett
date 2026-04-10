@@ -481,6 +481,9 @@ class ProductoSerializer(serializers.ModelSerializer):
     def validate_fecha_vencimiento(self, value):
         if value is not None:
             from datetime import date
+            # En actualizaciones, permitir la misma fecha que ya estaba guardada
+            if self.instance and self.instance.fecha_vencimiento == value:
+                return value
             if value < date.today():
                 raise serializers.ValidationError('La fecha de vencimiento no puede ser una fecha pasada.')
         return value
