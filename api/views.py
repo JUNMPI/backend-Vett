@@ -2673,13 +2673,38 @@ class HistorialVacunacionViewSet(viewsets.ModelViewSet):
                     'status': 'error'
                 }, status=status.HTTP_400_BAD_REQUEST)
 
-            # Validar fecha no futura
-            fecha_aplicacion = date.fromisoformat(data['fecha_aplicacion'])
+            # Validar fecha (presencia y formato)
+            fecha_raw = data.get('fecha_aplicacion')
+            if not fecha_raw:
+                return Response({
+                    'success': False,
+                    'message': 'El campo fecha_aplicacion es requerido.',
+                    'error_code': 'FECHA_REQUIRED',
+                    'status': 'error'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            try:
+                fecha_aplicacion = date.fromisoformat(str(fecha_raw))
+            except ValueError:
+                return Response({
+                    'success': False,
+                    'message': f'Formato de fecha inválido: "{fecha_raw}". Use formato YYYY-MM-DD.',
+                    'error_code': 'INVALID_DATE_FORMAT',
+                    'status': 'error'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
             if fecha_aplicacion > date.today():
                 return Response({
                     'success': False,
                     'message': f'La fecha de aplicación no puede ser futura: {fecha_aplicacion}',
                     'error_code': 'FUTURE_APPLICATION_DATE',
+                    'status': 'error'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            if fecha_aplicacion < date.today() - timedelta(days=3650):
+                return Response({
+                    'success': False,
+                    'message': f'Fecha muy antigua: {fecha_aplicacion}. Máximo 10 años atrás.',
+                    'error_code': 'DATE_TOO_OLD',
                     'status': 'error'
                 }, status=status.HTTP_400_BAD_REQUEST)
 
@@ -2732,6 +2757,20 @@ class HistorialVacunacionViewSet(viewsets.ModelViewSet):
                     'error_code': 'SPECIES_MISMATCH',
                     'status': 'error'
                 }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Validar edad mínima de la mascota
+            if vacuna.edad_minima_semanas and mascota_obj.fechaNacimiento:
+                edad_semanas = (fecha_aplicacion - mascota_obj.fechaNacimiento).days / 7
+                if edad_semanas < vacuna.edad_minima_semanas:
+                    return Response({
+                        'success': False,
+                        'message': (
+                            f'La mascota "{mascota_obj.nombreMascota}" tiene {edad_semanas:.1f} semanas '
+                            f'y la vacuna {vacuna.nombre} requiere mínimo {vacuna.edad_minima_semanas} semanas de edad.'
+                        ),
+                        'error_code': 'MASCOTA_TOO_YOUNG',
+                        'status': 'error'
+                    }, status=status.HTTP_400_BAD_REQUEST)
 
             # Validar veterinario activo
             veterinario_id = data.get('veterinario_id') or data.get('veterinario')
