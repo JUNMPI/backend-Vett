@@ -2377,6 +2377,24 @@ class VacunaViewSet(viewsets.ModelViewSet):
                 }, status=status.HTTP_409_CONFLICT)
 
             # 📝 Crear nuevo registro PRIMERO (sin marcar anteriores aún)
+            # ✅ VALIDACIÓN DE STOCK: verificar producto vinculado y stock disponible
+            producto = vacuna.producto_inventario
+            if producto is None:
+                return Response({
+                    'success': False,
+                    'message': f'La vacuna "{vacuna.nombre}" no tiene un producto de inventario asociado. Configúrala en Gestión de Vacunas antes de aplicarla.',
+                    'error_code': 'NO_PRODUCTO_VINCULADO',
+                    'status': 'error'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            if producto.stock <= 0:
+                return Response({
+                    'success': False,
+                    'message': f'Sin stock disponible para "{vacuna.nombre}". Registra un nuevo lote en Inventario para continuar.',
+                    'error_code': 'SIN_STOCK',
+                    'status': 'error'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
             try:
                 historial = HistorialVacunacion.objects.create(
                     mascota_id=data['mascota_id'],
@@ -2389,6 +2407,9 @@ class VacunaViewSet(viewsets.ModelViewSet):
                     observaciones=data.get('observaciones', ''),
                     estado='aplicada'  # 🆕 Siempre aplicada al crear, el serializer calculará dinámicamente
                 )
+                # Descontar 1 unidad del stock del producto vinculado
+                producto.stock -= 1
+                producto.save()
             except IntegrityError as e:
                 return Response({
                     'success': False,
@@ -2837,6 +2858,26 @@ class HistorialVacunacionViewSet(viewsets.ModelViewSet):
                         'status': 'error'
                     }, status=status.HTTP_404_NOT_FOUND)
 
+            proxima_fecha = self.calcular_proxima_fecha(vacuna, fecha_aplicacion, dosis_numero)
+
+            # ✅ VALIDACIÓN DE STOCK (antes del chequeo de duplicado)
+            producto = vacuna.producto_inventario
+            if producto is None:
+                return Response({
+                    'success': False,
+                    'message': f'La vacuna "{vacuna.nombre}" no tiene un producto de inventario asociado. Configúrala en Gestión de Vacunas antes de aplicarla.',
+                    'error_code': 'NO_PRODUCTO_VINCULADO',
+                    'status': 'error'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            if producto.stock <= 0:
+                return Response({
+                    'success': False,
+                    'message': f'Sin stock disponible para "{vacuna.nombre}". Registra un nuevo lote en Inventario para continuar.',
+                    'error_code': 'SIN_STOCK',
+                    'status': 'error'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
             # Validar duplicado exacto (misma mascota, vacuna, dosis y fecha)
             duplicado_exacto = HistorialVacunacion.objects.filter(
                 mascota_id=mascota_id,
@@ -2853,9 +2894,7 @@ class HistorialVacunacionViewSet(viewsets.ModelViewSet):
                     'status': 'error'
                 }, status=status.HTTP_409_CONFLICT)
 
-            proxima_fecha = self.calcular_proxima_fecha(vacuna, fecha_aplicacion, dosis_numero)
-
-            # Operación atómica: actualizar anteriores y crear nuevo registro juntos
+            # Operación atómica: actualizar anteriores, crear nuevo registro y descontar stock
             with transaction.atomic():
                 # Marcar registros anteriores como "completados"
                 HistorialVacunacion.objects.filter(
@@ -2880,6 +2919,9 @@ class HistorialVacunacionViewSet(viewsets.ModelViewSet):
                 serializer = self.get_serializer(data=historial_data)
                 if serializer.is_valid():
                     historial = serializer.save()
+                    # Descontar 1 unidad del stock (dentro del atomic para rollback si falla)
+                    producto.stock -= 1
+                    producto.save()
                 else:
                     return Response({
                         'success': False,
