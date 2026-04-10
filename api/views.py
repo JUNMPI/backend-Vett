@@ -1478,7 +1478,16 @@ class VacunaViewSet(viewsets.ModelViewSet):
         try:
             vacuna = self.get_object()
             data = request.data
-            
+
+            # Validar vacuna activa
+            if vacuna.estado != 'Activo':
+                return Response({
+                    'success': False,
+                    'message': f'La vacuna "{vacuna.nombre}" está inactiva y no puede aplicarse.',
+                    'error_code': 'VACCINE_INACTIVE',
+                    'status': 'error'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
             # Validaciones básicas
             campos_requeridos = ['mascota_id', 'fecha_aplicacion', 'veterinario_id']
             for campo in campos_requeridos:
@@ -1489,10 +1498,10 @@ class VacunaViewSet(viewsets.ModelViewSet):
                         'error_code': 'MISSING_REQUIRED_FIELD',
                         'status': 'error'
                     }, status=status.HTTP_400_BAD_REQUEST)
-            
+
             from datetime import date as date_class
             fecha_aplicacion = date_class.fromisoformat(data['fecha_aplicacion'])
-            
+
             # Validar fecha no futura
             if fecha_aplicacion > date_class.today():
                 return Response({
@@ -1519,6 +1528,14 @@ class VacunaViewSet(viewsets.ModelViewSet):
                     'error_code': 'MASCOTA_NOT_FOUND',
                     'status': 'error'
                 }, status=status.HTTP_404_NOT_FOUND)
+
+            if mascota_obj.estado != 'Activo':
+                return Response({
+                    'success': False,
+                    'message': f'La mascota "{mascota_obj.nombreMascota}" está inactiva y no puede recibir vacunas.',
+                    'error_code': 'MASCOTA_INACTIVE',
+                    'status': 'error'
+                }, status=status.HTTP_400_BAD_REQUEST)
 
             # Validar compatibilidad de especie
             if vacuna.especies and mascota_obj.especie not in vacuna.especies:
@@ -2663,11 +2680,18 @@ class HistorialVacunacionViewSet(viewsets.ModelViewSet):
             # Actualizar estados anteriores a "completado" para que no aparezcan en alertas
             registros_anteriores.update(estado='completado')
             
-            # Crear el registro de historial con datos calculados
+            # Crear el registro de historial — normalizar claves al formato del serializer
             historial_data = {
-                **data,
+                'mascota': data.get('mascota_id') or data.get('mascota'),
+                'vacuna': data.get('vacuna_id') or data.get('vacuna'),
+                'veterinario': data.get('veterinario_id') or data.get('veterinario'),
+                'fecha_aplicacion': data.get('fecha_aplicacion'),
+                'dosis_numero': dosis_numero,
+                'lote': data.get('lote', ''),
+                'laboratorio': data.get('laboratorio', ''),
+                'observaciones': data.get('observaciones', ''),
                 'proxima_fecha': proxima_fecha.isoformat(),
-                'estado': 'aplicada'  # Recién aplicada, será vigente hasta que se acerque próxima fecha
+                'estado': 'aplicada',
             }
             
             serializer = self.get_serializer(data=historial_data)
