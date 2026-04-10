@@ -2561,15 +2561,26 @@ class HistorialVacunacionViewSet(viewsets.ModelViewSet):
         )
 
     def get_queryset(self):
+        import uuid
         from datetime import date, timedelta
         qs = HistorialVacunacion.objects.all()
         params = self.request.query_params
+
+        def parse_uuid(val):
+            try:
+                return str(uuid.UUID(val))
+            except (ValueError, AttributeError):
+                return None
+
         if params.get('mascota_id'):
-            qs = qs.filter(mascota__id=params['mascota_id'])
+            uid = parse_uuid(params['mascota_id'])
+            qs = qs.filter(mascota__id=uid) if uid else qs.none()
         if params.get('vacuna_id'):
-            qs = qs.filter(vacuna__id=params['vacuna_id'])
+            uid = parse_uuid(params['vacuna_id'])
+            qs = qs.filter(vacuna__id=uid) if uid else qs.none()
         if params.get('veterinario_id'):
-            qs = qs.filter(veterinario__id=params['veterinario_id'])
+            uid = parse_uuid(params['veterinario_id'])
+            qs = qs.filter(veterinario__id=uid) if uid else qs.none()
         estado_param = params.get('estado')
         if estado_param:
             hoy = date.today()
